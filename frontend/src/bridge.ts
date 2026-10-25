@@ -1,13 +1,15 @@
 // Thin wrapper over the Wails bindings: the only module that talks to Go.
-import { ProxyStatus, SeedRows, StartStream, StopStream } from '../wailsjs/go/main/App'
+import { History, ProxyStatus, SeedRows, StartStream, StopStream } from '../wailsjs/go/main/App'
 import type { main } from '../wailsjs/go/models'
 import { EventsOn } from '../wailsjs/runtime/runtime'
-import { enqueueExchanges, type Exchange } from './store/exchanges'
+import { enqueueExchanges, type Exchange, useExchangeStore } from './store/exchanges'
 
 export { ExchangeDetail, Stats } from '../wailsjs/go/main/App'
 
 const EVENT_BATCH = 'exchanges:batch'
 const EVENT_PROXY_STATUS = 'proxy:status'
+const EVENT_STORAGE_ERROR = 'storage:error'
+const HISTORY_ROWS = 10_000 // must not exceed maxHistoryRows in app.go
 
 export type ProxyState = main.ProxyStatus
 const SEED_CHUNK = 10_000 // must not exceed maxSeedChunk in app.go
@@ -15,6 +17,24 @@ const SEED_CHUNK = 10_000 // must not exceed maxSeedChunk in app.go
 /** Subscribes the store to engine batches. Returns the unsubscribe function. */
 export function subscribeExchanges(): () => void {
   return EventsOn(EVENT_BATCH, (batch: Exchange[]) => enqueueExchanges(batch))
+}
+
+/**
+ * Loads past sessions' rows from the encrypted store into the grid. The Go
+ * side only returns rows stored before this launch, so they never duplicate
+ * rows arriving on the live path.
+ */
+export async function loadHistory(): Promise<void> {
+  try {
+    enqueueExchanges(await History(HISTORY_ROWS))
+  } catch (err) {
+    useExchangeStore.getState().setError(`history: ${String(err)}`)
+  }
+}
+
+/** Shows storage failures (rows that could not be saved) in the status bar. */
+export function subscribeStorageErrors(): () => void {
+  return EventsOn(EVENT_STORAGE_ERROR, (msg: string) => useExchangeStore.getState().setError(msg))
 }
 
 /**

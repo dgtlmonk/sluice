@@ -44,11 +44,26 @@ const fileMode os.FileMode = 0o600
 // setupTimeout bounds the PRAGMAs and migration that run inside Open.
 const setupTimeout = 30 * time.Second
 
-// schemaVersion is stored in PRAGMA user_version once schema.sql is applied.
-const schemaVersion = 1
+// schemaVersion is stored in PRAGMA user_version once every migration has
+// run. It equals len(migrations).
+const schemaVersion = 2
 
 //go:embed schema.sql
 var schemaSQL string
+
+// migrations[i] takes a database from user_version i to i+1. Entries are
+// append-only: a shipped step is never edited, because files already at a
+// later version would never run the edited text.
+//
+//   - 0 -> 1: the M0 schema (schema.sql).
+//   - 1 -> 2: M2 adds exchanges.error, the proxy-side failure text.
+//     SQLite's ALTER TABLE ADD COLUMN only rewrites the schema entry, not the
+//     rows: existing rows read the new column as NULL, so this is cheap even
+//     on a large history.
+var migrations = []string{
+	schemaSQL,
+	`ALTER TABLE exchanges ADD COLUMN error TEXT;`,
+}
 
 var (
 	// ErrInvalidKey means the key is not exactly KeySize bytes.
@@ -301,15 +316,19 @@ func (s *Store) tightenSidecars() error {
 	return nil
 }
 
-// migrate applies schema.sql to a new database.
+// migrate brings the database up to schemaVersion by running every pending
+// step of migrations, all in one transaction.
 //
-// The version check and the schema creation must be one atomic step, or two
-// processes opening the same new project could both see user_version 0 and
-// both try to create the tables. A default ("deferred") transaction takes no
-// lock until its first write, which leaves exactly that gap. LevelSerializable
-// makes the ncruces driver issue BEGIN IMMEDIATE instead, which takes the
-// write lock up front: the second opener waits (busy timeout) until the first
-// commits, then reads the new user_version and finds nothing to do.
+// The version check and the steps must be one atomic unit, or two processes
+// opening the same project could both see the old user_version and both run
+// the steps. A default ("deferred") transaction takes no lock until its first
+// write, which leaves exactly that gap. LevelSerializable makes the ncruces
+// driver issue BEGIN IMMEDIATE instead, which takes the write lock up front:
+// the second opener waits (busy timeout) until the first commits, then reads
+// the new user_version and finds nothing to do.
+//
+// SQLite DDL is transactional, so a failed step rolls back the earlier ones
+// too and the file stays at its old version.
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
@@ -328,8 +347,10 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("schema version %d is newer than supported %d", version, schemaVersion)
 	}
 
-	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
-		return err
+	for v := version; v < schemaVersion; v++ {
+		if _, err := tx.ExecContext(ctx, migrations[v]); err != nil {
+			return fmt.Errorf("step %d->%d: %w", v, v+1, err)
+		}
 	}
 	// PRAGMA does not accept bound parameters; schemaVersion is a constant.
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {

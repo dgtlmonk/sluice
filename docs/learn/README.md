@@ -8,3 +8,5 @@ Sluice is a learning build. Each core feature gets one short page: the idea, why
 | 02 | [Request smuggling and strict framing](02-request-smuggling.md) | M1 |
 | 03 | [The forwarding proxy](03-forwarding-proxy.md) | M1 |
 | 04 | [Differential fuzzing](04-differential-fuzzing.md) | M1 |
+| 05 | [The storage path: lossless history, encrypted at rest](05-storage-path.md) | M2 |
+| 06 | [Why a proxy: seeing traffic versus changing it](06-why-a-proxy.md) | M2 |

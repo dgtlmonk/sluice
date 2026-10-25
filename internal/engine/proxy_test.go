@@ -597,3 +597,104 @@ func TestProxySSEFirstEventBeforeOriginFinishes(t *testing.T) {
 		t.Fatalf("rest %q err %v", rest, err)
 	}
 }
+
+// hookRecorder collects what the storage hooks see, per direction.
+type hookRecorder struct {
+	mu     sync.Mutex
+	heads  map[Direction][]byte
+	bodies map[Direction]*bytes.Buffer
+	done   chan Exchange
+}
+
+func newHookRecorder() *hookRecorder {
+	return &hookRecorder{
+		heads:  map[Direction][]byte{},
+		bodies: map[Direction]*bytes.Buffer{DirRequest: {}, DirResponse: {}},
+		done:   make(chan Exchange, 4),
+	}
+}
+
+func (h *hookRecorder) config() Config {
+	return Config{
+		HeadTap: func(_ uint64, dir Direction, raw []byte) {
+			h.mu.Lock()
+			h.heads[dir] = append([]byte(nil), raw...)
+			h.mu.Unlock()
+		},
+		BodyTap: func(_ uint64, dir Direction, raw []byte) {
+			h.mu.Lock()
+			_, _ = h.bodies[dir].Write(raw)
+			h.mu.Unlock()
+		},
+		Done: func(ex Exchange) { h.done <- ex },
+	}
+}
+
+func (h *hookRecorder) wait(t *testing.T) Exchange {
+	t.Helper()
+	select {
+	case ex := <-h.done:
+		return ex
+	case <-time.After(3 * time.Second):
+		t.Fatal("Done hook not called")
+		return Exchange{}
+	}
+}
+
+// The storage hooks see the client's head byte-for-byte, the request body,
+// the origin's final head, and Done fires after them.
+func TestProxyStorageHooks(t *testing.T) {
+	co := startCountingOrigin(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Length", "2")
+		_, _ = io.WriteString(w, "ok")
+	}))
+	rec := newHookRecorder()
+	proxy, _ := startProxy(t, rec.config())
+	rc := dialProxy(t, proxy)
+	reqHead := "POST http://" + co.addr + "/upload HTTP/1.1\r\nHost: x\r\nX-Case: KeepMe\r\nContent-Length: 5\r\n\r\n"
+	rc.send(reqHead + "hello")
+	rc.read("POST")
+
+	ex := rec.wait(t)
+	if ex.Method != "POST" || ex.Status != 200 {
+		t.Fatalf("exchange %+v", ex)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if string(rec.heads[DirRequest]) != reqHead {
+		t.Fatalf("request head %q, want %q", rec.heads[DirRequest], reqHead)
+	}
+	if rec.bodies[DirRequest].String() != "hello" {
+		t.Fatalf("request body %q", rec.bodies[DirRequest])
+	}
+	if !strings.HasPrefix(string(rec.heads[DirResponse]), "HTTP/1.1 200 OK\r\n") ||
+		!strings.HasSuffix(string(rec.heads[DirResponse]), "\r\n\r\n") {
+		t.Fatalf("response head %q", rec.heads[DirResponse])
+	}
+	if rec.bodies[DirResponse].String() != "ok" {
+		t.Fatalf("response body %q", rec.bodies[DirResponse])
+	}
+}
+
+// A proxy-generated error is recorded as the bytes the client received.
+func TestProxyStorageHooksRecordRejection(t *testing.T) {
+	rec := newHookRecorder()
+	proxy, _ := startProxy(t, rec.config())
+	rc := dialProxy(t, proxy)
+	rc.send("GET /relative HTTP/1.1\r\nHost: x\r\n\r\n")
+	info, body := rc.read("GET")
+
+	ex := rec.wait(t)
+	if ex.Err == "" || ex.Status != info.StatusCode {
+		t.Fatalf("exchange %+v, client status %d", ex, info.StatusCode)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if !strings.HasPrefix(string(rec.heads[DirResponse]), "HTTP/1.1 400 ") {
+		t.Fatalf("response head %q", rec.heads[DirResponse])
+	}
+	if rec.bodies[DirResponse].String() != body {
+		t.Fatalf("response body %q, client got %q", rec.bodies[DirResponse], body)
+	}
+}

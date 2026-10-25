@@ -60,8 +60,19 @@ type Config struct {
 	Events *live.Feed[Exchange]
 	// BodyTap, if set, sees the raw wire bytes of every body (chunk framing
 	// included) as they stream. It runs inline on the forwarding path, so it
-	// must be fast and must not retain the slice. Storage wiring comes later.
+	// must be fast and must not retain the slice.
 	BodyTap func(exchangeID uint64, dir Direction, raw []byte)
+	// HeadTap, if set, sees each message head exactly as it was received:
+	// the client's request head, and the origin's final (non-1xx) response
+	// head. For a proxy-generated error response it sees the head the proxy
+	// wrote. Same rules as BodyTap: inline, fast, must not retain the slice.
+	HeadTap func(exchangeID uint64, dir Direction, rawHead []byte)
+	// Done, if set, is called once per published exchange, after the last
+	// HeadTap/BodyTap call for that exchange ID. Unlike Events it is not
+	// lossy, which is what the storage path needs; it runs inline on the
+	// connection goroutine, so it must not block (the storage queue it feeds
+	// never does).
+	Done func(Exchange)
 }
 
 // DefaultConfig returns the production defaults.
@@ -273,6 +284,15 @@ func (s *Server) removeConn(cc *clientConn) {
 func (s *Server) publish(ex Exchange) {
 	if s.cfg.Events != nil {
 		s.cfg.Events.Publish(ex) // non-blocking; drops are counted by the feed
+	}
+	if s.cfg.Done != nil {
+		s.cfg.Done(ex)
+	}
+}
+
+func (s *Server) tapHead(id uint64, dir Direction, raw []byte) {
+	if s.cfg.HeadTap != nil {
+		s.cfg.HeadTap(id, dir, raw)
 	}
 }
 

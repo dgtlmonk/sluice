@@ -23,12 +23,43 @@ export namespace live {
 
 export namespace main {
 	
+	export class StorageStats {
+	    available: boolean;
+	    error?: string;
+	    enqueued: number;
+	    saved: number;
+	    failed: number;
+	    unsaved: number;
+	    abandoned: number;
+	    behind: number;
+	    queued: number;
+	    lastError: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new StorageStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available = source["available"];
+	        this.error = source["error"];
+	        this.enqueued = source["enqueued"];
+	        this.saved = source["saved"];
+	        this.failed = source["failed"];
+	        this.unsaved = source["unsaved"];
+	        this.abandoned = source["abandoned"];
+	        this.behind = source["behind"];
+	        this.queued = source["queued"];
+	        this.lastError = source["lastError"];
+	    }
+	}
 	export class AppStats {
 	    live: live.Stats;
 	    devSynth: boolean;
 	    streaming: boolean;
 	    ratePerSec: number;
 	    lastId: number;
+	    storage: StorageStats;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppStats(source);
@@ -41,6 +72,7 @@ export namespace main {
 	        this.streaming = source["streaming"];
 	        this.ratePerSec = source["ratePerSec"];
 	        this.lastId = source["lastId"];
+	        this.storage = this.convertValues(source["storage"], StorageStats);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

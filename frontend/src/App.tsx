@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { subscribeExchanges } from './bridge'
+import { loadHistory, subscribeExchanges, subscribeStorageErrors } from './bridge'
 import { DetailPane } from './components/DetailPane'
 import { FilterBar } from './components/FilterBar'
 import { HistoryGrid } from './components/HistoryGrid'
@@ -8,6 +8,10 @@ import { Toolbar } from './components/Toolbar'
 
 export default function App() {
   useEffect(() => subscribeExchanges(), [])
+  useEffect(() => subscribeStorageErrors(), [])
+  useEffect(() => {
+    void loadHistory()
+  }, [])
 
   return (
     <div className="app">

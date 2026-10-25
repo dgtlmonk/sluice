@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/dgtlmonk/sluice/internal/engine"
 	"github.com/dgtlmonk/sluice/internal/live"
+	"github.com/dgtlmonk/sluice/internal/storage"
 	"github.com/dgtlmonk/sluice/internal/synth"
 )
 
@@ -22,6 +24,9 @@ const envProxyAddr = "SLUICE_PROXY_ADDR"
 
 const proxyShutdownGrace = 3 * time.Second
 
+// storageDrainTimeout bounds how long shutdown waits for queued history rows.
+const storageDrainTimeout = 10 * time.Second
+
 // ProxyStatus is what the UI shows about the proxy listener. Exactly one of
 // Addr (listening) or Error (not listening) is set once the bridge has started.
 type ProxyStatus struct {
@@ -30,32 +35,80 @@ type ProxyStatus struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// proxyBridge owns the engine proxy server inside the app and turns engine
-// Exchange events into History grid rows. It has no Wails dependency: the
-// app injects emit/onStatus, which keeps it testable without a webview.
+// historyStore is the part of the project store the bridge needs.
+// *storage.Store implements it; tests substitute stalled or failing stores.
+type historyStore interface {
+	storage.Inserter
+	GetExchange(ctx context.Context, id int64) (storage.Exchange, error)
+}
+
+// StorageStats is the storage half of the status bar: whether a project
+// store is open, and the lossless writer's counters.
+type StorageStats struct {
+	Available bool   `json:"available"`
+	Error     string `json:"error,omitempty"` // why no store is open
+	storage.WriterStats
+}
+
+// proxyBridge owns the engine proxy server inside the app. For every
+// finished exchange it does two things, on two paths (SPEC.md, Architecture):
+//
+//   - live (lossy): a grid row goes onto feed; if the UI is slow, rows drop
+//     and are counted, and the grid can re-read them from the store.
+//   - storage (lossless): the full capture (raw heads + bodies) goes to the
+//     single storage writer, which never blocks forwarding and reports every
+//     row it fails to save.
+//
+// It has no Wails dependency: the app injects emit/onStorageError, which
+// keeps it testable without a webview.
 type proxyBridge struct {
 	addr  string
-	feed  *live.Feed[engine.Exchange]
+	feed  *live.Feed[synth.Exchange]
 	newID func() int64 // shared with the synthetic source so row ids never collide
 
-	mu      sync.Mutex
-	status  ProxyStatus
-	srv     *engine.Server
-	served  chan struct{} // closed when Serve returns
-	flushed chan struct{} // closed when the feed flusher returns
-	// summaries keeps one line per engine row so the detail pane has
-	// something real to show until storage lands. Grows with history; see
-	// SPEC.md optimization backlog.
-	summaries map[int64]synth.Detail
+	capture *storage.Capture
+	// drainTimeout bounds how long stop waits for queued history rows.
+	drainTimeout time.Duration
+
+	mu       sync.Mutex
+	status   ProxyStatus
+	store    historyStore // nil when no project store could be opened
+	storeErr string       // why store is nil
+	writer   *storage.Writer
+	srv      *engine.Server
+	served   chan struct{} // closed when Serve returns
+	flushed  chan struct{} // closed when the feed flusher returns
+	writing  chan struct{} // closed when the storage writer returns
+	reported chan struct{} // closed when the storage error forwarder returns
 }
 
 func newProxyBridge(addr string, newID func() int64) *proxyBridge {
 	return &proxyBridge{
-		addr:      addr,
-		feed:      live.NewFeed[engine.Exchange](liveQueueCapacity, liveMaxBatch),
-		newID:     newID,
-		summaries: map[int64]synth.Detail{},
+		addr:         addr,
+		feed:         live.NewFeed[synth.Exchange](liveQueueCapacity, liveMaxBatch),
+		newID:        newID,
+		capture:      storage.NewCapture(storage.MaxStoredBody),
+		drainTimeout: storageDrainTimeout,
+		storeErr:     "no project store opened",
 	}
+}
+
+// useStore sets where history is written. Call before start. A nil store
+// with a reason keeps the proxy working while every exchange is counted
+// (and reported) as not saved.
+func (b *proxyBridge) useStore(store historyStore, unavailable string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.store, b.storeErr = store, unavailable
+}
+
+// unavailableStore is the inserter used when no project store is open: it
+// fails every batch with the reason, so the writer counts and reports each
+// exchange as unsaved instead of history silently being empty.
+type unavailableStore struct{ reason string }
+
+func (u unavailableStore) InsertBatch(context.Context, []storage.Exchange) error {
+	return errors.New("no project store: " + u.reason)
 }
 
 // proxyAddrFromEnv returns the configured listen address.
@@ -69,17 +122,64 @@ func proxyAddrFromEnv() string {
 // start opens the listener and begins serving. A listen failure (port taken,
 // non-loopback address) is not fatal: it becomes the status, and the app keeps
 // running so the user can see why. emit receives row batches; it must not block
-// for long, since a slow emit only makes the lossy feed drop.
-func (b *proxyBridge) start(ctx context.Context, emit func([]synth.Exchange)) ProxyStatus {
+// for long, since a slow emit only makes the lossy feed drop. onStorageError
+// receives storage failures (lossy notifications; the counters in
+// storageStats are the record).
+func (b *proxyBridge) start(ctx context.Context, emit func([]synth.Exchange), onStorageError func(string)) ProxyStatus {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	b.flushed = make(chan struct{})
 	go func() {
 		defer close(b.flushed)
-		b.feed.Run(ctx, flushInterval, func(batch []engine.Exchange) {
-			emit(b.toRows(batch))
-		})
+		b.feed.Run(ctx, flushInterval, emit)
+	}()
+
+	var ins storage.Inserter = unavailableStore{reason: b.storeErr}
+	if b.store != nil {
+		ins = b.store
+	}
+	b.writer = storage.NewWriter(ins, storage.DefaultWriterConfig())
+	b.writing = make(chan struct{})
+	w := b.writer
+	// The writer gets its own context, not ctx: ctx is cancelled at
+	// shutdown, and queued rows must still be written after that. stop()
+	// ends the writer with Close, which drains the queue first.
+	go func() { //nolint:gosec // G118: deliberate, see the comment above
+		defer close(b.writing)
+		w.Run(context.Background())
+	}()
+	// The forwarder outlives ctx on purpose: rows are still written (and can
+	// still fail) while stop drains the queue, after the UI context is gone.
+	// Those late errors are logged instead of dropped. It stops once the
+	// writer has returned and every pending notification is read.
+	b.reported = make(chan struct{})
+	go func() {
+		defer close(b.reported)
+		forward := func(err error) {
+			if ctx.Err() != nil {
+				// Shutting down: no UI left. Writer errors carry ids, counts
+				// and the database's reason, never headers or bodies.
+				log.Printf("storage: %v", err)
+				return
+			}
+			onStorageError(err.Error())
+		}
+		for {
+			select {
+			case err := <-w.Errors():
+				forward(err)
+			case <-w.Done():
+				for {
+					select {
+					case err := <-w.Errors():
+						forward(err)
+					default:
+						return
+					}
+				}
+			}
+		}
 	}()
 
 	ln, err := engine.Listen(b.addr, false)
@@ -89,7 +189,13 @@ func (b *proxyBridge) start(ctx context.Context, emit func([]synth.Exchange)) Pr
 	}
 
 	cfg := engine.DefaultConfig()
-	cfg.Events = b.feed
+	cfg.HeadTap = func(id uint64, dir engine.Direction, raw []byte) {
+		b.capture.Head(id, dir == engine.DirResponse, raw)
+	}
+	cfg.BodyTap = func(id uint64, dir engine.Direction, raw []byte) {
+		b.capture.Body(id, dir == engine.DirResponse, raw)
+	}
+	cfg.Done = b.complete
 	b.srv = engine.NewServer(cfg)
 	b.served = make(chan struct{})
 	srv := b.srv
@@ -102,6 +208,49 @@ func (b *proxyBridge) start(ctx context.Context, emit func([]synth.Exchange)) Pr
 	}()
 	b.status = ProxyStatus{Listening: true, Addr: ln.Addr().String()}
 	return b.status
+}
+
+// complete runs on the connection goroutine when an exchange finishes. Both
+// sends are non-blocking: Publish drops when the UI lags, Enqueue only
+// appends to the in-memory storage queue.
+func (b *proxyBridge) complete(ex engine.Exchange) {
+	req, resp := b.capture.Finish(ex.ID)
+	host, port := splitHostPort(ex.Host)
+	id := b.newID()
+	b.feed.Publish(synth.Exchange{
+		ID:         id,
+		StartedAt:  ex.Started.UnixMilli(),
+		Method:     ex.Method,
+		Scheme:     "http", // M1 proxies plain HTTP only
+		Host:       host,
+		Port:       port,
+		Path:       ex.Path,
+		Status:     ex.Status,
+		ReqSize:    int(ex.ReqBytes),
+		RespSize:   int(ex.RespBytes),
+		DurationMs: int(ex.Duration.Milliseconds()),
+	})
+	b.mu.Lock()
+	w := b.writer
+	b.mu.Unlock()
+	w.Enqueue(storage.Exchange{
+		ID:        id,
+		StartedAt: ex.Started,
+		Duration:  ex.Duration,
+		Scheme:    "http",
+		Host:      host,
+		Port:      port,
+		Method:    ex.Method,
+		Path:      ex.Path,
+		Status:    ex.Status,
+		ReqSize:   ex.ReqBytes,
+		RespSize:  ex.RespBytes,
+		Err:       ex.Err,
+		Tool:      "proxy",
+		IsLLM:     false, // the basic LLM flag is a separate M2 task
+		Request:   req,
+		Response:  resp,
+	})
 }
 
 // listenReason turns a listen error into a short human reason.
@@ -134,10 +283,13 @@ func (b *proxyBridge) Status() ProxyStatus {
 }
 
 // stop shuts the server down gracefully (in-flight exchanges get a grace
-// period) and waits for the flusher, whose ctx the caller has cancelled.
-func (b *proxyBridge) stop() {
+// period), then drains the storage writer, and waits for the flusher, whose
+// ctx the caller has cancelled. Rows the writer could not drain in time are
+// returned as an error: at shutdown there is no UI left to show it. When
+// stop returns the writer has exited, so the store is safe to close.
+func (b *proxyBridge) stop() error {
 	b.mu.Lock()
-	srv, served, flushed := b.srv, b.served, b.flushed
+	srv, served, flushed, w, writing, reported := b.srv, b.served, b.flushed, b.writer, b.writing, b.reported
 	b.srv = nil
 	b.mu.Unlock()
 
@@ -147,55 +299,105 @@ func (b *proxyBridge) stop() {
 		cancel()
 		<-served
 	}
+	var err error
+	if w != nil {
+		// After Shutdown no exchange can complete any more, so nothing is
+		// enqueued after Close and nothing is refused as "closed". Close
+		// returns only once the writer is out of InsertBatch (on a timeout
+		// it cancels the insert and counts the leftover rows as unsaved), so
+		// the caller may close the store afterwards.
+		err = w.Close(b.drainTimeout)
+		<-writing
+		<-reported
+	}
 	if flushed != nil {
 		<-flushed
 	}
+	return err
 }
 
-// detail returns the summary detail for an engine row, if it is one.
-func (b *proxyBridge) detail(id int64) (synth.Detail, bool) {
+// storageStats reports the storage path for the status bar.
+func (b *proxyBridge) storageStats() StorageStats {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	d, ok := b.summaries[id]
-	return d, ok
-}
-
-// toRows maps engine exchanges onto the grid row shape. The engine carries
-// no headers yet, so MIME stays empty and the LLM flag is false (M2 adds it).
-func (b *proxyBridge) toRows(batch []engine.Exchange) []synth.Exchange {
-	rows := make([]synth.Exchange, len(batch))
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for i, ex := range batch {
-		host, port := splitHostPort(ex.Host)
-		row := synth.Exchange{
-			ID:         b.newID(),
-			StartedAt:  ex.Started.UnixMilli(),
-			Method:     ex.Method,
-			Scheme:     "http", // M1 proxies plain HTTP only
-			Host:       host,
-			Port:       port,
-			Path:       ex.Path,
-			Status:     ex.Status,
-			ReqSize:    int(ex.ReqBytes),
-			RespSize:   int(ex.RespBytes),
-			DurationMs: int(ex.Duration.Milliseconds()),
-		}
-		rows[i] = row
-		b.summaries[row.ID] = summarize(row.ID, ex)
+	st := StorageStats{Available: b.store != nil}
+	if b.store == nil {
+		st.Error = b.storeErr
 	}
-	return rows
+	if b.writer != nil {
+		st.WriterStats = b.writer.Stats()
+	}
+	return st
 }
 
-// summarize builds the placeholder detail text. Exchange holds no headers or
-// bodies, so this never contains secrets.
-func summarize(id int64, ex engine.Exchange) synth.Detail {
-	req := fmt.Sprintf("%s http://%s%s\n\n(raw request capture arrives with storage)", ex.Method, ex.Host, ex.Path)
-	resp := fmt.Sprintf("status %d · %d B in %s", ex.Status, ex.RespBytes, ex.Duration.Round(time.Millisecond))
+// detail reads one exchange from the store and renders it as raw text.
+// found is false when the id is not in the store (a synthetic row, or one
+// the writer has not committed yet).
+func (b *proxyBridge) detail(ctx context.Context, id int64) (d synth.Detail, found bool, err error) {
+	b.mu.Lock()
+	store := b.store
+	b.mu.Unlock()
+	if store == nil {
+		return synth.Detail{}, false, nil
+	}
+	ex, err := store.GetExchange(ctx, id)
+	if errors.Is(err, storage.ErrNotFound) {
+		return synth.Detail{}, false, nil
+	}
+	if err != nil {
+		return synth.Detail{}, false, err
+	}
+	resp := renderMessage(ex.Response)
 	if ex.Err != "" {
-		resp += "\nproxy error: " + ex.Err
+		resp += "\n\n(proxy error: " + ex.Err + ")"
 	}
-	return synth.Detail{ID: id, Request: req, Response: resp}
+	return synth.Detail{ID: id, Request: renderMessage(ex.Request), Response: resp}, true, nil
+}
+
+// maxDetailBody caps how much of a stored body the detail pane receives in
+// one bridge message; the store keeps the whole capped body.
+const maxDetailBody = 256 << 10
+
+// renderMessage shows head + body as captured. This stays inside the app
+// (the user's own view of their own store), so nothing is redacted here;
+// redaction applies to paths that leave the store (exports, MCP, LLMs).
+func renderMessage(m *storage.Message) string {
+	if m == nil {
+		return "(not captured)"
+	}
+	var sb strings.Builder
+	sb.Write(m.RawHeaders)
+	body := m.RawBody
+	cut := false
+	if len(body) > maxDetailBody {
+		body, cut = body[:maxDetailBody], true
+	}
+	sb.Write(body)
+	switch {
+	case cut:
+		fmt.Fprintf(&sb, "\n\n(showing %d of %d stored body bytes)", maxDetailBody, len(m.RawBody))
+	case m.BodyTruncated:
+		fmt.Fprintf(&sb, "\n\n(stored body truncated at %d bytes; the full body was forwarded)", len(m.RawBody))
+	}
+	return sb.String()
+}
+
+// rowFromStored maps a stored exchange onto the grid row shape.
+func rowFromStored(ex storage.Exchange) synth.Exchange {
+	return synth.Exchange{
+		ID:         ex.ID,
+		StartedAt:  ex.StartedAt.UnixMilli(),
+		Method:     ex.Method,
+		Scheme:     ex.Scheme,
+		Host:       ex.Host,
+		Port:       ex.Port,
+		Path:       ex.Path,
+		Status:     ex.Status,
+		ReqSize:    int(ex.ReqSize),
+		RespSize:   int(ex.RespSize),
+		DurationMs: int(ex.Duration.Milliseconds()),
+		IsLLM:      ex.IsLLM,
+	}
 }
 
 // splitHostPort splits an authority; a missing port means the http default.

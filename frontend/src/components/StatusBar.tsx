@@ -6,7 +6,8 @@ import { useExchangeStore } from '../store/exchanges'
 
 const SAMPLE_MS = 500
 
-type Live = { eventsPerSec: number; dropped: number; queued: number }
+type Storage = { available: boolean; error?: string; saved: number; lost: number; behind: number; queued: number }
+type Live = { eventsPerSec: number; dropped: number; queued: number; storage: Storage | null }
 
 export function StatusBar() {
   const count = useExchangeStore((s) => s.count)
@@ -46,11 +47,38 @@ export function StatusBar() {
       <span>
         Queued <b>{live.queued.toLocaleString()}</b>
       </span>
+      <StorageStatus storage={live.storage} />
       <span className={fps < 50 ? 'warn' : undefined}>
         FPS <b>{fps}</b>
       </span>
       {lastError && <span className="error">{lastError}</span>}
     </footer>
+  )
+}
+
+/**
+ * The lossless storage path. "Lost" (failed + refused rows) is a bug state
+ * and shows as an error; "behind" means rows are waiting in memory, not lost.
+ */
+function StorageStatus({ storage }: { storage: Storage | null }) {
+  if (storage === null) return <span>Saved …</span>
+  if (!storage.available) return <span className="error">storage off: {storage.error}</span>
+  return (
+    <>
+      <span>
+        Saved <b>{storage.saved.toLocaleString()}</b>
+      </span>
+      {storage.lost > 0 && (
+        <span className="error">
+          History incomplete: <b>{storage.lost.toLocaleString()}</b> not saved
+        </span>
+      )}
+      {storage.behind > 0 && storage.queued > 0 && (
+        <span className="warn">
+          Store behind <b>{storage.queued.toLocaleString()}</b>
+        </span>
+      )}
+    </>
   )
 }
 
@@ -66,6 +94,7 @@ function useLiveStats(): Live {
     eventsPerSec: 0,
     dropped: 0,
     queued: 0,
+    storage: null,
   })
 
   useEffect(() => {
@@ -88,6 +117,14 @@ function useLiveStats(): Live {
           eventsPerSec,
           dropped: s.live.dropped,
           queued: s.live.queued,
+          storage: {
+            available: s.storage.available,
+            error: s.storage.error,
+            saved: s.storage.saved,
+            lost: s.storage.failed + s.storage.unsaved,
+            behind: s.storage.behind,
+            queued: s.storage.queued,
+          },
         })
       } catch {
         setLive((prev) => ({ ...prev, eventsPerSec }))

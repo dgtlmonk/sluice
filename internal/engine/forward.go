@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"io"
 	"net"
@@ -84,6 +85,7 @@ func (cc *clientConn) handleOne() bool {
 	}
 	x.req = req
 	x.ex.Method = req.Method
+	s.tapHead(x.ex.ID, DirRequest, req.RawHead)
 
 	if status, reason := cc.checkRequest(x); status != 0 {
 		x.ex.Err = reason
@@ -330,6 +332,7 @@ func (cc *clientConn) relayResponse(x *exchange, up *upstreamConn, resp *Respons
 
 	plan := planResponse(x.req.Minor, x.clientKA, resp)
 	x.ex.Status = resp.StatusCode
+	s.tapHead(x.ex.ID, DirResponse, resp.RawHead)
 	_ = writeHead(cc.bw, statusLine(resp), plan.headers)
 	if err := cc.bw.Flush(); err != nil {
 		up.close()
@@ -454,7 +457,18 @@ func (cc *clientConn) reject(x *exchange, status int, msg string) {
 	if status == 405 { // RFC 9110 §15.5.6: a 405 MUST list what is allowed
 		h = append(h, Header{Name: "Allow", Value: "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"})
 	}
-	_ = writeHead(cc.bw, "HTTP/1.1 "+strconv.Itoa(status)+" "+reasonPhrase(status), h)
+	// Build the head in memory first so the history records exactly the
+	// bytes the client got, then send them.
+	var head bytes.Buffer
+	hw := bufio.NewWriter(&head)
+	_ = writeHead(hw, "HTTP/1.1 "+strconv.Itoa(status)+" "+reasonPhrase(status), h)
+	_ = hw.Flush()
+	s := cc.srv
+	s.tapHead(x.ex.ID, DirResponse, head.Bytes())
+	if tap := s.tapFor(x.ex.ID, DirResponse); tap != nil {
+		tap([]byte(body))
+	}
+	_, _ = cc.bw.Write(head.Bytes())
 	_, _ = cc.bw.WriteString(body)
 	_ = cc.bw.Flush()
 }

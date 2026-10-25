@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -12,12 +13,16 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/dgtlmonk/sluice/internal/live"
+	"github.com/dgtlmonk/sluice/internal/storage"
 	"github.com/dgtlmonk/sluice/internal/synth"
 )
 
 const (
 	eventExchangesBatch = "exchanges:batch"
 	eventProxyStatus    = "proxy:status"
+	eventStorageError   = "storage:error"
+	// maxHistoryRows caps the rows History loads into the grid at startup.
+	maxHistoryRows = 10_000
 	// envDevSynth=1 enables the M0 synthetic source (Seed/Stream). Off by default.
 	envDevSynth       = "SLUICE_DEV_SYNTH"
 	flushInterval     = 100 * time.Millisecond
@@ -26,6 +31,7 @@ const (
 	maxSeedChunk      = 10_000
 	maxStreamRate     = 100_000
 	synthSeed         = 0x51_1CE
+	storeReadTimeout  = 10 * time.Second
 )
 
 // App is the Wails binding surface. It is glue only: engine-side code lives in
@@ -38,6 +44,11 @@ type App struct {
 
 	proxy    *proxyBridge
 	devSynth bool
+	store    *storage.Store // nil if the project could not be opened; set in startup
+	// historyMax is the largest stored id at startup. History serves rows up
+	// to it; newer rows reach the grid through the live path, so the two
+	// never overlap.
+	historyMax int64
 
 	gen    synth.Generator
 	feed   *live.Feed[synth.Exchange]
@@ -65,11 +76,12 @@ func (s *stream) stop() {
 
 // AppStats is what the status bar polls.
 type AppStats struct {
-	Live       live.Stats `json:"live"` // proxy + synthetic feeds combined
-	DevSynth   bool       `json:"devSynth"`
-	Streaming  bool       `json:"streaming"`
-	RatePerSec int        `json:"ratePerSec"`
-	LastID     int64      `json:"lastId"`
+	Live       live.Stats   `json:"live"` // proxy + synthetic feeds combined
+	DevSynth   bool         `json:"devSynth"`
+	Streaming  bool         `json:"streaming"`
+	RatePerSec int          `json:"ratePerSec"`
+	LastID     int64        `json:"lastId"`
+	Storage    StorageStats `json:"storage"`
 }
 
 // errSynthDisabled is returned by the synthetic-source bindings unless the
@@ -89,6 +101,13 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	runCtx, cancel := context.WithCancel(ctx)
 
+	// Open the project before the proxy starts, so the first exchange
+	// already has somewhere to go, and so new row ids start past the stored
+	// ones. Failure is not fatal: the proxy still runs and every exchange is
+	// counted and reported as not saved.
+	store, err := openProject()
+	unavailable := a.attachStore(ctx, store, err)
+
 	// Bound methods read runCtx/cancel under mu, so publish them under mu too.
 	a.mu.Lock()
 	a.wailsCtx = ctx
@@ -106,8 +125,42 @@ func (a *App) startup(ctx context.Context) {
 	// A listen failure is reported, never fatal: the UI shows the reason.
 	status := a.proxy.start(runCtx, func(rows []synth.Exchange) {
 		runtime.EventsEmit(ctx, eventExchangesBatch, rows)
+	}, func(msg string) {
+		runtime.EventsEmit(ctx, eventStorageError, msg)
 	})
 	runtime.EventsEmit(ctx, eventProxyStatus, status)
+	if unavailable != "" {
+		runtime.EventsEmit(ctx, eventStorageError, "history is not being saved: "+unavailable)
+	}
+}
+
+// attachStore hands the opened project store (or the reason there is none)
+// to the proxy and starts the id counter past the stored rows. It returns
+// why history is unavailable, or "" when the store is usable.
+//
+// If the largest stored id cannot be read, the store is treated as
+// unavailable rather than counted from 0: new ids would collide with stored
+// rows, so the proxy keeps forwarding while every exchange is counted and
+// reported as not saved, with this reason.
+func (a *App) attachStore(ctx context.Context, store *storage.Store, openErr error) string {
+	reason := ""
+	if openErr != nil {
+		reason = openErr.Error() // errors here never carry the key
+	} else if maxID, err := store.MaxID(ctx); err != nil {
+		reason = "could not read stored history ids: " + err.Error()
+		if cerr := store.Close(); cerr != nil {
+			log.Printf("storage: close: %v", cerr)
+		}
+	} else {
+		a.store = store
+		a.historyMax = maxID
+		a.nextID.Store(maxID)
+		a.proxy.useStore(store, "")
+		return ""
+	}
+	log.Printf("storage: %s", reason)
+	a.proxy.useStore(nil, reason)
+	return reason
 }
 
 // shutdown stops the producer and flusher and waits for both to exit.
@@ -120,8 +173,39 @@ func (a *App) shutdown(_ context.Context) {
 	}
 	a.stopStreamLocked()
 	a.mu.Unlock()
-	a.proxy.stop()
+	if err := a.proxy.stop(); err != nil {
+		log.Printf("storage: %v", err)
+	}
 	a.wg.Wait()
+	// proxy.stop has waited for the storage writer to exit (cancelling a
+	// stuck insert if the drain timed out), so nothing is inside the store.
+	if a.store != nil {
+		if err := a.store.Close(); err != nil {
+			log.Printf("storage: close: %v", err)
+		}
+	}
+}
+
+// History returns the newest stored exchanges (metadata only, oldest first)
+// so the grid shows past sessions on startup.
+func (a *App) History(limit int) ([]synth.Exchange, error) {
+	if a.store == nil {
+		return nil, nil
+	}
+	if limit < 1 || limit > maxHistoryRows {
+		return nil, fmt.Errorf("history limit must be 1..%d, got %d", maxHistoryRows, limit)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), storeReadTimeout)
+	defer cancel()
+	stored, err := a.store.RecentExchanges(ctx, limit, a.historyMax)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]synth.Exchange, len(stored))
+	for i, ex := range stored {
+		rows[i] = rowFromStored(ex)
+	}
+	return rows, nil
 }
 
 // ProxyStatus reports whether the proxy is listening (and where) or why not.
@@ -204,19 +288,26 @@ func (a *App) Stats() AppStats {
 		Streaming:  streaming,
 		RatePerSec: rate,
 		LastID:     a.nextID.Load(),
+		Storage:    a.proxy.storageStats(),
 	}
 }
 
 // ExchangeDetail returns the raw request/response text for one exchange.
-// Proxied rows get a summary; synthetic rows are regenerated from their id.
-func (a *App) ExchangeDetail(id int64) synth.Detail {
-	if d, ok := a.proxy.detail(id); ok {
-		return d
+// Proxied rows are read from the store; synthetic rows are regenerated from
+// their id.
+func (a *App) ExchangeDetail(id int64) (synth.Detail, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), storeReadTimeout)
+	defer cancel()
+	d, found, err := a.proxy.detail(ctx, id)
+	switch {
+	case err != nil:
+		return synth.Detail{}, err
+	case found:
+		return d, nil
+	case a.devSynth:
+		return a.gen.Detail(id), nil
 	}
-	if !a.devSynth {
-		return synth.Detail{ID: id}
-	}
-	return a.gen.Detail(id)
+	return synth.Detail{ID: id, Request: "(not in the store yet: the storage writer has not committed this exchange, or it was not saved; see the status bar)"}, nil
 }
 
 func sumStats(x, y live.Stats) live.Stats {
