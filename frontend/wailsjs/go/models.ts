@@ -119,6 +119,7 @@ export namespace main {
 	    ja4?: string;
 	    tunnel?: string;
 	    pinSuspected?: boolean;
+	    unused?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ExchangeTLS(source);
@@ -129,6 +130,7 @@ export namespace main {
 	        this.ja4 = source["ja4"];
 	        this.tunnel = source["tunnel"];
 	        this.pinSuspected = source["pinSuspected"];
+	        this.unused = source["unused"];
 	    }
 	}
 	export class HeaderField {

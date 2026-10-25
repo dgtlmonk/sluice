@@ -239,9 +239,9 @@ func (b *proxyBridge) complete(ex engine.Exchange) {
 	host, port := splitHostPort(ex.Host, scheme)
 	llmReason := detectLLM(ex.Path, req, resp)
 	id := b.newID()
-	if ex.JA4 != "" || ex.Tunnel != "" || ex.PinSuspected {
+	if facts, ok := tlsFacts(ex); ok {
 		b.mu.Lock()
-		b.tlsMeta.put(id, ExchangeTLS{JA4: ex.JA4, Tunnel: ex.Tunnel, PinSuspected: ex.PinSuspected})
+		b.tlsMeta.put(id, facts)
 		b.mu.Unlock()
 	}
 	b.feed.Publish(synth.Exchange{
@@ -437,6 +437,16 @@ type ExchangeTLS struct {
 	JA4          string `json:"ja4,omitempty"`
 	Tunnel       string `json:"tunnel,omitempty"` // why it was tunnelled raw; "" when decrypted
 	PinSuspected bool   `json:"pinSuspected,omitempty"`
+	// Unused: a CONNECT the client closed without using (browser
+	// preconnect). The row's proxy error is then a note, shown muted.
+	Unused bool `json:"unused,omitempty"`
+}
+
+// tlsFacts picks the detail pane's TLS facts out of an exchange; ok is false
+// for a plain HTTP row with nothing to show.
+func tlsFacts(ex engine.Exchange) (ExchangeTLS, bool) {
+	f := ExchangeTLS{JA4: ex.JA4, Tunnel: ex.Tunnel, PinSuspected: ex.PinSuspected, Unused: ex.Unused}
+	return f, f != ExchangeTLS{}
 }
 
 // TLSHost is a host the engine tunnels raw on its own (Settings list).

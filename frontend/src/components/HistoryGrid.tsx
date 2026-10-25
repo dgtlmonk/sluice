@@ -3,6 +3,7 @@ import { columnSizingFeature, createColumnHelper, tableFeatures, useTable } from
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useExchangeStore, type Exchange } from '../store/exchanges'
 import { rowHeightFor, usePrefsStore } from '../store/prefs'
+import { statusText } from '../view/status'
 import { indexInView, positionAt } from '../view/rowView'
 import { followsArrival, type SortColumn } from '../view/sort'
 
@@ -19,7 +20,7 @@ const columns = helper.columns([
   helper.accessor('status', {
     header: 'Status',
     size: 64,
-    cell: (info) => <span className={statusClass(info.getValue())}>{info.getValue()}</span>,
+    cell: (info) => <span className={statusClass(info.getValue())}>{statusText(info.getValue())}</span>,
   }),
   helper.accessor('respSize', { header: 'Length', size: 84, cell: (info) => info.getValue().toLocaleString() }),
   helper.accessor('mime', { header: 'MIME', size: 150 }),
@@ -192,6 +193,7 @@ function hostLabel(x: Exchange): string {
 }
 
 function statusClass(status: number): string {
+  if (status === 0) return 'status s0' // no response sent (e.g. an unused CONNECT)
   if (status >= 500) return 'status s5'
   if (status >= 400) return 'status s4'
   if (status >= 300) return 'status s3'

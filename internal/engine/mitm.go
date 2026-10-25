@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -177,6 +178,12 @@ func (cc *clientConn) handleConnect(x *exchange) bool {
 		return false
 	}
 	x.ex.Host = net.JoinHostPort(host, port)
+	// A CONNECT row is about a TLS connection whenever the port is 443 or a
+	// ClientHello is seen (below), so the grid shows https://host for it
+	// whether it was decrypted, tunnelled raw or failed.
+	if port == "443" {
+		x.ex.Scheme = "https"
+	}
 	authority := host
 	if strings.Contains(host, ":") {
 		authority = "[" + host + "]"
@@ -197,9 +204,17 @@ func (cc *clientConn) handleConnect(x *exchange) bool {
 	helloRaw, hello, err := readClientHello(cc.br)
 	cc.conn.endHead()
 	if err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) {
+			// The client asked for a tunnel and hung up before sending its
+			// hello (io.ReadFull says io.EOF only when no byte came): a
+			// speculative connection it never needed.
+			markUnused(x)
+			return false
+		}
 		x.ex.Err = "ClientHello: " + err.Error()
 		return false
 	}
+	x.ex.Scheme = "https" // a ClientHello arrived: this is TLS on any port
 	x.ex.JA4 = ja4(hello)
 	// SNI names the site; an IP-literal target has none, so the CONNECT host
 	// is the name both legs use.
@@ -243,19 +258,27 @@ func (cc *clientConn) handleConnect(x *exchange) bool {
 	err = tc.HandshakeContext(ctx)
 	cancel()
 	if err != nil {
-		// The client aborted (often: it does not trust the root CA) or spoke
-		// something that is not TLS. Nothing can be answered on a half-done
-		// handshake; record why and close.
+		_ = tc.Close()
+		// Nothing can be answered on a half-done handshake; record why.
+		if certSent && closedWithoutAlert(err) {
+			// The client saw our certificate and closed without a word.
+			// That is what browsers do with preconnects: Chromium opens
+			// spare sockets speculatively and drops the ones it does not
+			// need. A client that rejects a certificate says so with an
+			// alert, so a silent close is "unused", never "pinned".
+			markUnused(x)
+			return false
+		}
 		x.ex.Err = "client TLS handshake: " + err.Error()
-		if certSent && clientAborted(err) && s.cfg.CATrusted != nil && s.cfg.CATrusted() {
-			// The client saw a leaf it should trust and still hung up: it
+		if certSent && certRejectAlert(err) && s.cfg.CATrusted != nil && s.cfg.CATrusted() {
+			// The client explicitly rejected a leaf it should trust: it
 			// most likely pins the real certificate (or its key). Future
 			// CONNECTs to this host are tunnelled raw so the app keeps
-			// working; the flag shows the user why.
+			// working; the flag shows the user why. The flag lives in
+			// memory only, so a restart clears it.
 			x.ex.PinSuspected = true
 			s.policy.learn(name, TunnelPinned)
 		}
-		_ = tc.Close()
 		return false
 	}
 
@@ -301,7 +324,7 @@ func (s *Server) dialTLS(c net.Conn, serverName string) (net.Conn, error) {
 	defer cancel()
 	if err := tc.HandshakeContext(ctx); err != nil {
 		_ = c.Close()
-		if isRemoteAlert(err, "no application protocol") {
+		if isRemoteAlert(err, alertNoApplicationProtocol) {
 			// Alert 120 (RFC 7301 §3.2): none of our protocols, i.e. not
 			// http/1.1, is acceptable to this origin.
 			return nil, fmt.Errorf("origin TLS handshake: %w: %w", errHTTP11Refused, err)
@@ -317,25 +340,89 @@ func (s *Server) dialTLS(c net.Conn, serverName string) (net.Conn, error) {
 	return tc, nil
 }
 
+// alertNoApplicationProtocol is alert 120 (RFC 7301 §3.2).
+const alertNoApplicationProtocol tls.AlertError = 120
+
 // errHTTP11Refused marks an origin that will not speak HTTP/1.1 over TLS.
 var errHTTP11Refused = errors.New("origin refuses http/1.1")
 
-// isRemoteAlert reports whether err is a TLS alert the peer sent us with
-// the given description. crypto/tls returns a received alert as a
-// *net.OpError with Op "remote error" whose Err is an unexported alert type,
-// so the description text (from RFC 8446 §6) is the only handle on it.
-func isRemoteAlert(err error, desc string) bool {
-	var op *net.OpError
-	return errors.As(err, &op) && op.Op == "remote error" && op.Err != nil && op.Err.Error() == "tls: "+desc
+// unusedNote explains a CONNECT the client gave up on without an error.
+const unusedNote = "client closed connection unused (likely browser preconnect)"
+
+// markUnused records a CONNECT whose client closed it silently. It is kept
+// as a row (a defender may want to see every connection attempt) but marked
+// so the UI shows it muted, not as a failure.
+func markUnused(x *exchange) {
+	x.ex.Unused = true
+	x.ex.Err = unusedNote
 }
 
-// clientAborted reports whether a failed server handshake ended because the
-// client gave up: it sent an alert (bad_certificate, unknown_ca, ...) or
-// just closed the connection. Timeouts and garbage are not aborts.
-func clientAborted(err error) bool {
+// certRejectAlerts are the TLS alert codes (RFC 8446 §6.2, RFC 5246 §7.2.2)
+// a client sends when it refuses the server's certificate. Only these count
+// as evidence of pinning:
+//
+//	42 bad_certificate          certificate corrupt or failed verification
+//	                            (crypto/tls and BoringSSL send it for a chain
+//	                            or pin mismatch)
+//	43 unsupported_certificate  certificate of an unsupported type
+//	44 certificate_revoked      revoked by its signer
+//	45 certificate_expired      expired or not yet valid
+//	46 certificate_unknown      "some other issue" with it: Android and many
+//	                            pinning libraries send this one
+//	48 unknown_ca               chain does not lead to a trusted root; with
+//	                            our CA trusted, a pinned client says this
+//
+// Left out on purpose: 40 handshake_failure (no common cipher suite etc.),
+// 49 access_denied (the certificate was fine, policy said no) and
+// 51 decrypt_error (a signature or Finished check failed: a broken
+// handshake as often as a rejected key). They do not say "your certificate".
+var certRejectAlerts = []tls.AlertError{42, 43, 44, 45, 46, 48}
+
+// receivedAlert extracts the alert a peer sent from a handshake error.
+// Over TCP, crypto/tls reports a received alert as a *net.OpError with Op
+// "remote error" (printed "remote error: tls: <description>") whose Err is
+// an unexported alert type; tls.AlertError (Go 1.21+) is only wrapped into
+// errors on QUIC connections. So both shapes are checked: AlertError via
+// errors.As, then the OpError, whose description is matched against
+// AlertError's own text for the same code (both print the RFC name).
+func receivedAlert(err error) (tls.AlertError, bool) {
+	var ae tls.AlertError
+	if errors.As(err, &ae) {
+		return ae, true
+	}
 	var op *net.OpError
-	if errors.As(err, &op) && op.Op == "remote error" {
-		return true
+	if !errors.As(err, &op) || op.Op != "remote error" || op.Err == nil {
+		return 0, false
+	}
+	desc := op.Err.Error()
+	for code := 0; code <= 255; code++ {
+		if tls.AlertError(code).Error() == desc {
+			return tls.AlertError(code), true
+		}
+	}
+	return 0, false
+}
+
+// isRemoteAlert reports whether err is the given TLS alert from the peer.
+func isRemoteAlert(err error, want tls.AlertError) bool {
+	a, ok := receivedAlert(err)
+	return ok && a == want
+}
+
+// certRejectAlert reports whether the client ended the handshake with an
+// alert that means "I refuse your certificate" (see certRejectAlerts).
+func certRejectAlert(err error) bool {
+	a, ok := receivedAlert(err)
+	return ok && slices.Contains(certRejectAlerts, a)
+}
+
+// closedWithoutAlert reports whether the client just went away: a FIN
+// (EOF), a close_notify alert (crypto/tls turns that into io.EOF too) or a
+// reset. None of these says anything about our certificate. A timeout is not
+// a close: the client is still there, it just stopped talking.
+func closedWithoutAlert(err error) bool {
+	if _, ok := receivedAlert(err); ok {
+		return false
 	}
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET)
 }

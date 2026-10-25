@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgtlmonk/sluice/internal/engine"
 	"github.com/dgtlmonk/sluice/internal/platform"
 )
 
@@ -66,5 +67,16 @@ func TestTLSMetaIndexEvictsOldest(t *testing.T) {
 	}
 	if m.byID[maxTLSMeta+4].JA4 != "x" {
 		t.Fatal("newest entry lost")
+	}
+}
+
+// An unused CONNECT carries its flag to the detail pane even without a JA4
+// (closed before the ClientHello), so the note is shown muted, not red.
+func TestTLSFactsCarriesUnused(t *testing.T) {
+	if f, ok := tlsFacts(engine.Exchange{Unused: true}); !ok || !f.Unused || f.PinSuspected {
+		t.Fatalf("got %+v %v", f, ok)
+	}
+	if _, ok := tlsFacts(engine.Exchange{Scheme: "http"}); ok {
+		t.Fatal("plain HTTP row got TLS facts")
 	}
 }

@@ -32,7 +32,7 @@ type Exchange struct {
 	ID        uint64
 	Started   time.Time
 	Method    string
-	Scheme    string // "http", or "https" inside a decrypted CONNECT tunnel
+	Scheme    string // "http"; "https" inside a tunnel and for a CONNECT to :443 or one that sent a ClientHello
 	Host      string // authority from the request target
 	Path      string // origin-form path, query included
 	Status    int    // status sent to the client; 0 if none was sent
@@ -45,7 +45,8 @@ type Exchange struct {
 	// a decrypted tunnel inherit them from the tunnel's ClientHello.
 	JA4          string // client TLS fingerprint (see ja4.go); "" for plain HTTP
 	Tunnel       string // non-empty: tunnelled raw, not decrypted; the Tunnel* reason
-	PinSuspected bool   // the client aborted our handshake while the CA is trusted
+	PinSuspected bool   // the client rejected our certificate with an alert while the CA is trusted
+	Unused       bool   // a CONNECT the client closed silently before using it (browser preconnect); Err holds a note, not a failure
 }
 
 // Config tunes the proxy. Zero durations fall back to DefaultConfig values.

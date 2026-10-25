@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ExchangeDetail, ExchangeTLS, type ExchangeTLSState, type ExchangeView, type MessageView } from '../bridge'
 import { useExchangeStore } from '../store/exchanges'
+import { statusText } from '../view/status'
 
 type Tab = 'raw' | 'headers'
 type Loaded = { view: ExchangeView; tls: ExchangeTLSState } | { error: string }
@@ -45,7 +46,13 @@ export function DetailPane() {
           </button>
         ))}
         {loaded && 'error' in loaded && <span className="detail-error">error: {loaded.error}</span>}
-        {view?.proxyError && <span className="detail-error">proxy error: {view.proxyError}</span>}
+        {view?.proxyError &&
+          (tls?.unused ? (
+            // A silently abandoned CONNECT (browser preconnect) is not a failure.
+            <span className="detail-note">{view.proxyError}</span>
+          ) : (
+            <span className="detail-error">proxy error: {view.proxyError}</span>
+          ))}
       </nav>
       {tls && <TLSStrip tls={tls} />}
       <div className="detail-cols">
@@ -59,7 +66,7 @@ export function DetailPane() {
           <header>
             Response{' '}
             <span className="muted">
-              {selected.status} · {selected.respSize.toLocaleString()} B · {selected.durationMs} ms
+              {statusText(selected.status)} · {selected.respSize.toLocaleString()} B · {selected.durationMs} ms
             </span>
           </header>
           {view && <Message m={view.response} tab={tab} />}
