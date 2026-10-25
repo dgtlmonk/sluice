@@ -31,7 +31,20 @@ curl -sv -x 127.0.0.1:8081 http://example.com/ -o /dev/null           # plain HT
 curl -sv -x 127.0.0.1:8081 --cacert /etc/ssl/cert.pem https://example.com/ -o /dev/null  # client rejects Sluice cert
 ```
 
-**Real Chromium (Brave), headless, isolated profile** — exercises preconnect, h2 offers, background
+**Browser agent (preferred real browser)** — the gstack `browse` daemon drives Chromium through Sluice,
+so recon can click and navigate like a user, not just load one URL:
+```
+browse disconnect                                   # --proxy only applies to a fresh daemon
+browse --proxy http://127.0.0.1:8081 goto https://example.com
+browse snapshot                                     # page loaded? no cert interstitial?
+# ...navigate/click whatever the feature touches...
+browse disconnect                                   # ALWAYS: restore the shared daemon without the proxy
+```
+The daemon is shared by every skill on this machine; a proxied daemon left running silently routes other
+work through Sluice. Disconnecting drops its tabs and cookies, so check with the user first if another
+session may be using it. Chromium on macOS reads the login keychain, so it trusts the Sluice CA once installed.
+
+**Real Chromium (Brave), headless, isolated profile** — fallback when the browse daemon is busy; — exercises preconnect, h2 offers, background
 component/telemetry traffic:
 ```
 "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" --headless=new \
