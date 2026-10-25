@@ -107,6 +107,22 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
+// The default project lives under "Application Support", so paths with
+// spaces (and other URI-special characters) must survive the SQLite URI.
+func TestOpenPathWithSpecialCharacters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Application Support", "a+b %20 c", "p.sluice")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := openStore(t, path, newKey(t))
+	id := insertSample(t, s)
+	got, err := s.GetExchange(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetExchange: %v", err)
+	}
+	assertSample(t, got)
+}
+
 func TestReopenWithSameKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "p.sluice")
 	key := newKey(t)

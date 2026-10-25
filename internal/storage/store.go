@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ncruces/go-sqlite3"
@@ -147,7 +148,12 @@ func buildDSN(abs string) string {
 	q := url.Values{}
 	q.Set("vfs", "adiantum")
 	q.Set("modeof", abs)
-	u := url.URL{Scheme: "file", OmitHost: true, Path: abs, RawQuery: q.Encode()}
+	// url.Values.Encode writes a space as "+" (HTML form encoding), but SQLite
+	// URIs follow RFC 3986 and only decode %XX, so "Application Support" would
+	// become a path with a literal "+". A real "+" is already escaped as %2B,
+	// so swapping "+" for %20 is safe.
+	rawQuery := strings.ReplaceAll(q.Encode(), "+", "%20")
+	u := url.URL{Scheme: "file", OmitHost: true, Path: abs, RawQuery: rawQuery}
 	return u.String()
 }
 
