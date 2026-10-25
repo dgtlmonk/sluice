@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,12 +17,15 @@ import (
 
 const (
 	eventExchangesBatch = "exchanges:batch"
-	flushInterval       = 100 * time.Millisecond
-	liveQueueCapacity   = 16_384
-	liveMaxBatch        = 4_096 // per flush, so the bridge tops out near 40k events/s
-	maxSeedChunk        = 10_000
-	maxStreamRate       = 100_000
-	synthSeed           = 0x51_1CE
+	eventProxyStatus    = "proxy:status"
+	// envDevSynth=1 enables the M0 synthetic source (Seed/Stream). Off by default.
+	envDevSynth       = "SLUICE_DEV_SYNTH"
+	flushInterval     = 100 * time.Millisecond
+	liveQueueCapacity = 16_384
+	liveMaxBatch      = 4_096 // per flush, so the bridge tops out near 40k events/s
+	maxSeedChunk      = 10_000
+	maxStreamRate     = 100_000
+	synthSeed         = 0x51_1CE
 )
 
 // App is the Wails binding surface. It is glue only: engine-side code lives in
@@ -30,6 +35,9 @@ type App struct {
 	runCtx   context.Context // cancelled on shutdown; parent of all background work
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
+
+	proxy    *proxyBridge
+	devSynth bool
 
 	gen    synth.Generator
 	feed   *live.Feed[synth.Exchange]
@@ -57,17 +65,25 @@ func (s *stream) stop() {
 
 // AppStats is what the status bar polls.
 type AppStats struct {
-	Live       live.Stats `json:"live"`
+	Live       live.Stats `json:"live"` // proxy + synthetic feeds combined
+	DevSynth   bool       `json:"devSynth"`
 	Streaming  bool       `json:"streaming"`
 	RatePerSec int        `json:"ratePerSec"`
 	LastID     int64      `json:"lastId"`
 }
 
+// errSynthDisabled is returned by the synthetic-source bindings unless the
+// dev toggle is on.
+var errSynthDisabled = errors.New("synthetic source is disabled (set " + envDevSynth + "=1)")
+
 func NewApp() *App {
-	return &App{
-		gen:  synth.New(synthSeed),
-		feed: live.NewFeed[synth.Exchange](liveQueueCapacity, liveMaxBatch),
+	a := &App{
+		devSynth: os.Getenv(envDevSynth) == "1",
+		gen:      synth.New(synthSeed),
+		feed:     live.NewFeed[synth.Exchange](liveQueueCapacity, liveMaxBatch),
 	}
+	a.proxy = newProxyBridge(proxyAddrFromEnv(), func() int64 { return a.nextID.Add(1) })
+	return a
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -86,6 +102,12 @@ func (a *App) startup(ctx context.Context) {
 			runtime.EventsEmit(ctx, eventExchangesBatch, batch)
 		})
 	}()
+
+	// A listen failure is reported, never fatal: the UI shows the reason.
+	status := a.proxy.start(runCtx, func(rows []synth.Exchange) {
+		runtime.EventsEmit(ctx, eventExchangesBatch, rows)
+	})
+	runtime.EventsEmit(ctx, eventProxyStatus, status)
 }
 
 // shutdown stops the producer and flusher and waits for both to exit.
@@ -98,12 +120,21 @@ func (a *App) shutdown(_ context.Context) {
 	}
 	a.stopStreamLocked()
 	a.mu.Unlock()
+	a.proxy.stop()
 	a.wg.Wait()
+}
+
+// ProxyStatus reports whether the proxy is listening (and where) or why not.
+func (a *App) ProxyStatus() ProxyStatus {
+	return a.proxy.Status()
 }
 
 // SeedRows returns n freshly generated exchanges. The frontend seeds large
 // tables in chunks so no single bridge message gets huge.
 func (a *App) SeedRows(n int) ([]synth.Exchange, error) {
+	if !a.devSynth {
+		return nil, errSynthDisabled
+	}
 	if n < 1 || n > maxSeedChunk {
 		return nil, fmt.Errorf("seed chunk must be 1..%d rows, got %d", maxSeedChunk, n)
 	}
@@ -118,6 +149,9 @@ func (a *App) SeedRows(n int) ([]synth.Exchange, error) {
 // StartStream starts (or restarts at a new rate) the synthetic producer.
 // Exchanges arrive on the "exchanges:batch" event roughly every 100 ms.
 func (a *App) StartStream(ratePerSec int) error {
+	if !a.devSynth {
+		return errSynthDisabled
+	}
 	if ratePerSec < 1 || ratePerSec > maxStreamRate {
 		return fmt.Errorf("rate must be 1..%d per second, got %d", maxStreamRate, ratePerSec)
 	}
@@ -165,7 +199,8 @@ func (a *App) Stats() AppStats {
 	streaming, rate := a.stream != nil, a.rate
 	a.mu.Unlock()
 	return AppStats{
-		Live:       a.feed.Stats(),
+		Live:       sumStats(a.feed.Stats(), a.proxy.feed.Stats()),
+		DevSynth:   a.devSynth,
 		Streaming:  streaming,
 		RatePerSec: rate,
 		LastID:     a.nextID.Load(),
@@ -173,6 +208,22 @@ func (a *App) Stats() AppStats {
 }
 
 // ExchangeDetail returns the raw request/response text for one exchange.
+// Proxied rows get a summary; synthetic rows are regenerated from their id.
 func (a *App) ExchangeDetail(id int64) synth.Detail {
+	if d, ok := a.proxy.detail(id); ok {
+		return d
+	}
+	if !a.devSynth {
+		return synth.Detail{ID: id}
+	}
 	return a.gen.Detail(id)
+}
+
+func sumStats(x, y live.Stats) live.Stats {
+	return live.Stats{
+		Published: x.Published + y.Published,
+		Dropped:   x.Dropped + y.Dropped,
+		Emitted:   x.Emitted + y.Emitted,
+		Queued:    x.Queued + y.Queued,
+	}
 }

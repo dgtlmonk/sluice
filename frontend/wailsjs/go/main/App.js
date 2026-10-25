@@ -6,6 +6,10 @@ export function ExchangeDetail(arg1) {
   return window['go']['main']['App']['ExchangeDetail'](arg1);
 }
 
+export function ProxyStatus() {
+  return window['go']['main']['App']['ProxyStatus']();
+}
+
 export function SeedRows(arg1) {
   return window['go']['main']['App']['SeedRows'](arg1);
 }

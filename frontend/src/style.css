@@ -426,3 +426,11 @@ button.toggle.llm.on {
   margin-left: auto;
   color: var(--danger);
 }
+
+.statusbar .proxy-up b {
+  color: var(--ok);
+}
+
+.statusbar .proxy-down {
+  color: var(--danger);
+}

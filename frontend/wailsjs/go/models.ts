@@ -25,6 +25,7 @@ export namespace main {
 	
 	export class AppStats {
 	    live: live.Stats;
+	    devSynth: boolean;
 	    streaming: boolean;
 	    ratePerSec: number;
 	    lastId: number;
@@ -36,6 +37,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.live = this.convertValues(source["live"], live.Stats);
+	        this.devSynth = source["devSynth"];
 	        this.streaming = source["streaming"];
 	        this.ratePerSec = source["ratePerSec"];
 	        this.lastId = source["lastId"];
@@ -58,6 +60,22 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class ProxyStatus {
+	    listening: boolean;
+	    addr?: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProxyStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.listening = source["listening"];
+	        this.addr = source["addr"];
+	        this.error = source["error"];
+	    }
 	}
 
 }

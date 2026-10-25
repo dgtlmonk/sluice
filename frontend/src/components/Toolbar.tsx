@@ -16,6 +16,8 @@ export function Toolbar() {
   const [rate, setRate] = useState<number>(3_000)
   const [streaming, setStreaming] = useState(false)
   const [seeded, setSeeded] = useState<number | null>(null)
+  // Synthetic Seed/Stream controls exist only behind the engine's dev toggle.
+  const [devSynth, setDevSynth] = useState(false)
 
   // The engine outlives the webview (a reload keeps the stream running), so take
   // the stream state from it instead of assuming a fresh start.
@@ -23,7 +25,9 @@ export function Toolbar() {
     let stale = false
     Stats()
       .then((s) => {
-        if (stale || !s.streaming) return
+        if (stale) return
+        setDevSynth(s.devSynth)
+        if (!s.streaming) return
         setStreaming(true)
         if (s.ratePerSec > 0) setRate(s.ratePerSec)
       })
@@ -77,36 +81,35 @@ export function Toolbar() {
   return (
     <div className="toolbar">
       <span className="brand">Sluice</span>
-      <span className="sep" />
-      <button onClick={onSeed} disabled={seeded !== null}>
-        {seeded === null ? 'Seed 100k' : `Seeding ${Math.round((seeded / SEED_TOTAL) * 100)}%`}
-      </button>
-      <span className="sep" />
-      <label className="field">
-        Rate
-        <select value={rate} onChange={(e) => onRate(Number(e.target.value))}>
-          {rates.map((r) => (
-            <option key={r} value={r}>
-              {r / 1000}k/s
-            </option>
-          ))}
-        </select>
-      </label>
-      <button className={streaming ? 'danger' : 'primary'} onClick={onToggleStream}>
-        {streaming ? 'Stop' : 'Start'}
-      </button>
+      {devSynth && (
+        <>
+          <span className="sep" />
+          <button onClick={onSeed} disabled={seeded !== null}>
+            {seeded === null ? 'Seed 100k' : `Seeding ${Math.round((seeded / SEED_TOTAL) * 100)}%`}
+          </button>
+          <span className="sep" />
+          <label className="field">
+            Rate
+            <select value={rate} onChange={(e) => onRate(Number(e.target.value))}>
+              {rates.map((r) => (
+                <option key={r} value={r}>
+                  {r / 1000}k/s
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className={streaming ? 'danger' : 'primary'} onClick={onToggleStream}>
+            {streaming ? 'Stop' : 'Start'}
+          </button>
+        </>
+      )}
       <span className="sep" />
       <button onClick={clear}>Clear</button>
       <label
         className={'field check' + (canFollow ? '' : ' disabled')}
         title={canFollow ? undefined : 'Paused while sorted: new rows only land at the bottom in arrival order or # ascending'}
       >
-        <input
-          type="checkbox"
-          checked={autoScroll && canFollow}
-          disabled={!canFollow}
-          onChange={(e) => setAutoScroll(e.target.checked)}
-        />
+        <input type="checkbox" checked={autoScroll && canFollow} disabled={!canFollow} onChange={(e) => setAutoScroll(e.target.checked)} />
         Auto-scroll to newest
       </label>
     </div>

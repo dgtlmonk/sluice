@@ -182,6 +182,7 @@ The main goal is functionality. These items are tracked for a later optimization
 - **Proxy copy path (M1):** pool the 32 KiB copy buffers (`sync.Pool`); coalesce flushes for non-streaming bodies (today every read is flushed so SSE/chunked stream); background reaper for idle upstream conns plus a global idle cap (today: per-host cap, age checked on reuse).
 - **Proxy request/response overlap (M1):** request body is fully sent before the response is read; a full-duplex copy would let an origin answer early (e.g. 413) without waiting for a large upload.
 - **Pool health peek (M1):** reusing an idle upstream conn does a 1-byte read with a 1 ms deadline while holding the pool mutex; move it outside the lock (or use a non-blocking syscall peek) so concurrent gets do not serialize on it.
+- **Proxy row summaries (M2 bridge):** the app keeps one in-memory summary per proxied row for the detail pane until storage lands; it grows with history. Replace with on-demand reads from the store.
 - **Measure:** engine heap (`runtime.MemStats`) and webview RSS under sustained traffic, e.g. 1M synthetic exchanges.
 
 ## Storage

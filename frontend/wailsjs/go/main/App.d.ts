@@ -5,6 +5,8 @@ import {main} from '../models';
 
 export function ExchangeDetail(arg1:number):Promise<synth.Detail>;
 
+export function ProxyStatus():Promise<main.ProxyStatus>;
+
 export function SeedRows(arg1:number):Promise<Array<synth.Exchange>>;
 
 export function StartStream(arg1:number):Promise<void>;
