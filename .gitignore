@@ -147,3 +147,24 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# --- Sluice ---
+# Captured traffic and secrets. Never commit these.
+*.sluice
+*.sluice-wal
+*.sluice-shm
+*.sluice-journal
+*.pem
+*.key
+*.p12
+
+# Go
+*.test
+*.out
+/build/bin/
+
+# Wails frontend build
+frontend/dist/
+
+# macOS
+.DS_Store
