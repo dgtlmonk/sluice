@@ -52,6 +52,11 @@ jobs:
       - name: go test
         run: go test ./...
 
+      # Differential fuzz: engine parser vs net/http (oracle). A short run per
+      # commit catches regressions; long runs happen locally.
+      - name: go fuzz (parser differential)
+        run: go test -run='^$' -fuzz=FuzzReadRequestDifferential -fuzztime=30s ./internal/engine/
+
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 

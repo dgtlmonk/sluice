@@ -179,6 +179,9 @@ The main goal is functionality. These items are tracked for a later optimization
 - **Rows carry no bodies** (already true): the detail pane fetches one exchange on demand.
 - **Bounded caches:** upstream connection pool with idle timeout; in-memory leaf-cert cache as an LRU backed by the disk cache.
 - **Frontend tooling:** upgrade Vite 3 to a supported major (dev-server advisory GHSA-67mh-4wv8-2f99).
+- **Proxy copy path (M1):** pool the 32 KiB copy buffers (`sync.Pool`); coalesce flushes for non-streaming bodies (today every read is flushed so SSE/chunked stream); background reaper for idle upstream conns plus a global idle cap (today: per-host cap, age checked on reuse).
+- **Proxy request/response overlap (M1):** request body is fully sent before the response is read; a full-duplex copy would let an origin answer early (e.g. 413) without waiting for a large upload.
+- **Pool health peek (M1):** reusing an idle upstream conn does a 1-byte read with a 1 ms deadline while holding the pool mutex; move it outside the lock (or use a non-blocking syscall peek) so concurrent gets do not serialize on it.
 - **Measure:** engine heap (`runtime.MemStats`) and webview RSS under sustained traffic, e.g. 1M synthetic exchanges.
 
 ## Storage

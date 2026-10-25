@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("0 * HTTP/1.0\r\n0000:\r\nContent-Length:05\r\nContent-Length:5\r\n\r\n00000")
