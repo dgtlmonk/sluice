@@ -167,7 +167,12 @@ func addCommand(kc, service, account, hexKey string) []byte {
 // It maps the well-known exit statuses to sentinel errors. Stderr is
 // included in other errors for diagnosis; stdin is never echoed into it.
 func run(stdin []byte, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
+	return runTimeout(cmdTimeout, stdin, args...)
+}
+
+// runTimeout is run with a caller-chosen timeout.
+func runTimeout(timeout time.Duration, stdin []byte, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	// G204: the binary is a constant absolute path, and args are fixed verbs,
@@ -184,7 +189,7 @@ func run(stdin []byte, args ...string) ([]byte, error) {
 
 	err := cmd.Run()
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("security %s: timed out after %s", args[0], cmdTimeout)
+		return nil, fmt.Errorf("security %s: timed out after %s", args[0], timeout)
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {

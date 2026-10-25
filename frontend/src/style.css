@@ -518,3 +518,98 @@ button.toggle.llm.on {
 .statusbar .proxy-down {
   color: var(--danger);
 }
+
+/* Settings modal */
+
+.spacer {
+  flex: 1;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8vh;
+  z-index: 10;
+}
+
+.modal {
+  width: min(640px, calc(100vw - 32px));
+  max-height: 84vh;
+  overflow: auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 18px 18px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal h2 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.modal h3 {
+  font-size: 13px;
+  margin: 16px 0 6px;
+}
+
+.modal p {
+  line-height: 1.5;
+  margin: 6px 0;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin: 10px 0;
+}
+
+.kv dt {
+  color: var(--text-muted);
+}
+
+.kv dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.wrap {
+  overflow-wrap: anywhere;
+}
+
+.modal .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.small {
+  font-size: 11px;
+}
+
+.ok-text {
+  color: var(--ok);
+}
+
+.warn-text {
+  color: var(--warn);
+}
+
+.error-text {
+  color: var(--danger);
+}

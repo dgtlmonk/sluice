@@ -1,6 +1,6 @@
 // Thin wrapper over the Wails bindings: the only module that talks to Go.
-import { History, ProxyStatus, SeedRows, StartStream, StopStream } from '../wailsjs/go/main/App'
-import type { main } from '../wailsjs/go/models'
+import { CAInfo, CATrust, ExportCA, History, InstallCA, ProxyStatus, SeedRows, StartStream, StopStream } from '../wailsjs/go/main/App'
+import type { main, platform } from '../wailsjs/go/models'
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { enqueueExchanges, type Exchange, useExchangeStore } from './store/exchanges'
 
@@ -14,6 +14,8 @@ const HISTORY_ROWS = 10_000 // must not exceed maxHistoryRows in app.go
 export type ProxyState = main.ProxyStatus
 export type ExchangeView = main.ExchangeView
 export type MessageView = main.MessageView
+export type CAState = main.CAInfo
+export type TrustState = platform.TrustReport
 const SEED_CHUNK = 10_000 // must not exceed maxSeedChunk in app.go
 
 /** Subscribes the store to engine batches. Returns the unsubscribe function. */
@@ -68,3 +70,10 @@ export async function seedRows(total: number, onProgress?: (done: number) => voi
 
 export const startStream = (ratePerSec: number): Promise<void> => StartStream(ratePerSec)
 export const stopStream = (): Promise<void> => StopStream()
+
+export const caInfo = (): Promise<CAState> => CAInfo()
+export const caTrust = (): Promise<TrustState> => CATrust()
+/** User-clicked only: macOS shows a password dialog. */
+export const installCA = (): Promise<void> => InstallCA()
+/** Returns the saved path, or '' if the user cancelled the dialog. */
+export const exportCA = (): Promise<string> => ExportCA()

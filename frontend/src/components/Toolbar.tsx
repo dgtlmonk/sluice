@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { seedRows, startStream, Stats, stopStream } from '../bridge'
 import { useExchangeStore } from '../store/exchanges'
 import { followsArrival } from '../view/sort'
+import { SettingsPanel } from './SettingsPanel'
 
 const SEED_TOTAL = 100_000
 const RATES = [1_000, 3_000, 5_000, 10_000] as const
@@ -18,6 +19,7 @@ export function Toolbar() {
   const [seeded, setSeeded] = useState<number | null>(null)
   // Synthetic Seed/Stream controls exist only behind the engine's dev toggle.
   const [devSynth, setDevSynth] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   // The engine outlives the webview (a reload keeps the stream running), so take
   // the stream state from it instead of assuming a fresh start.
@@ -112,6 +114,9 @@ export function Toolbar() {
         <input type="checkbox" checked={autoScroll && canFollow} disabled={!canFollow} onChange={(e) => setAutoScroll(e.target.checked)} />
         Auto-scroll to newest
       </label>
+      <span className="spacer" />
+      <button onClick={() => setSettingsOpen(true)}>Settings</button>
+      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
     </div>
   )
 }

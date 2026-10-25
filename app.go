@@ -13,6 +13,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/dgtlmonk/sluice/internal/live"
+	"github.com/dgtlmonk/sluice/internal/platform"
 	"github.com/dgtlmonk/sluice/internal/storage"
 	"github.com/dgtlmonk/sluice/internal/synth"
 )
@@ -43,6 +44,7 @@ type App struct {
 	wg       sync.WaitGroup
 
 	proxy    *proxyBridge
+	ca       *caService
 	devSynth bool
 	store    *storage.Store // nil if the project could not be opened; set in startup
 	// historyMax is the largest stored id at startup. History serves rows up
@@ -94,6 +96,7 @@ func NewApp() *App {
 		gen:      synth.New(synthSeed),
 		feed:     live.NewFeed[synth.Exchange](liveQueueCapacity, liveMaxBatch),
 	}
+	a.ca = newCAService(platform.SystemCertTrust())
 	a.proxy = newProxyBridge(proxyAddrFromEnv(), func() int64 { return a.nextID.Add(1) })
 	return a
 }
@@ -107,6 +110,17 @@ func (a *App) startup(ctx context.Context) {
 	// counted and reported as not saved.
 	store, err := openProject()
 	unavailable := a.attachStore(ctx, store, err)
+
+	// Root CA: created on first run, loaded after. A failure only affects
+	// HTTPS; Settings shows the reason.
+	if dir, err := defaultCADir(); err != nil {
+		a.ca.load("", func(string) ([]byte, error) { return nil, fmt.Errorf("CA folder: %w", err) })
+	} else {
+		a.ca.load(dir, keychainCASecret)
+	}
+	if info := a.ca.info(); !info.Ready {
+		log.Printf("ca: %s", info.Error) // errors never carry key material
+	}
 
 	// Bound methods read runCtx/cancel under mu, so publish them under mu too.
 	a.mu.Lock()
@@ -318,4 +332,35 @@ func sumStats(x, y live.Stats) live.Stats {
 		Emitted:   x.Emitted + y.Emitted,
 		Queued:    x.Queued + y.Queued,
 	}
+}
+
+// CAInfo describes the root CA for Settings (public facts only).
+func (a *App) CAInfo() CAInfo { return a.ca.info() }
+
+// CATrust runs the trust health check: is the root in the login keychain,
+// and does macOS accept a leaf it signs.
+func (a *App) CATrust() (platform.TrustReport, error) { return a.ca.check() }
+
+// InstallCA adds the root to the login keychain as trusted. Bound to the
+// Settings button only: macOS asks the user for their password.
+func (a *App) InstallCA() error { return a.ca.install() }
+
+// ExportCA asks where to save the root certificate (PEM, no key) and writes
+// it. It returns the chosen path, or "" if the user cancelled.
+func (a *App) ExportCA() (string, error) {
+	a.mu.Lock()
+	ctx := a.wailsCtx
+	a.mu.Unlock()
+	if ctx == nil {
+		return "", errors.New("app is not running")
+	}
+	path, err := runtime.SaveFileDialog(ctx, runtime.SaveDialogOptions{
+		Title:           "Export Sluice CA certificate",
+		DefaultFilename: "sluice-ca.pem",
+		Filters:         []runtime.FileFilter{{DisplayName: "PEM certificate (*.pem)", Pattern: "*.pem"}},
+	})
+	if err != nil || path == "" {
+		return "", err
+	}
+	return path, a.ca.export(path)
 }

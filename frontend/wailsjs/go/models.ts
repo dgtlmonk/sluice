@@ -93,6 +93,28 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class CAInfo {
+	    ready: boolean;
+	    error?: string;
+	    subject?: string;
+	    fingerprint?: string;
+	    notAfter?: string;
+	    dir?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CAInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ready = source["ready"];
+	        this.error = source["error"];
+	        this.subject = source["subject"];
+	        this.fingerprint = source["fingerprint"];
+	        this.notAfter = source["notAfter"];
+	        this.dir = source["dir"];
+	    }
+	}
 	export class HeaderField {
 	    name: string;
 	    value: string;
@@ -211,6 +233,27 @@ export namespace main {
 	        this.listening = source["listening"];
 	        this.addr = source["addr"];
 	        this.error = source["error"];
+	    }
+	}
+
+}
+
+export namespace platform {
+	
+	export class TrustReport {
+	    installed: boolean;
+	    trusted: boolean;
+	    detail?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrustReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.installed = source["installed"];
+	        this.trusted = source["trusted"];
+	        this.detail = source["detail"];
 	    }
 	}
 
