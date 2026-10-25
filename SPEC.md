@@ -178,9 +178,9 @@ Ideas worth copying, collected along the way. Not scheduled; each moves into a m
 
 | Idea | Seen in | Why it matters here |
 |------|---------|---------------------|
-| Process name per connection (which app made it) | Little Snitch, LuLu, Proxyman | Background traffic is only useful when you know which app sent it |
-| Background traffic view: group by app and host, mark first-seen hosts | Little Snitch | New phone-home hosts stand out without reading every row |
-| Transparent capture for apps that ignore proxy settings (Network Extension or `pf` redirect) | mitmproxy (transparent/local mode), Proxyman | Daemons and many CLIs never use the system proxy |
+| Process name per connection (which app made it) — **M3.5** | Little Snitch, LuLu, Proxyman | Background traffic is only useful when you know which app sent it |
+| Background traffic view: group by app and host, mark first-seen hosts — **M3.5** | Little Snitch | New phone-home hosts stand out without reading every row |
+| Transparent capture for apps that ignore proxy settings (Network Extension or `pf` redirect) — **M9** | mitmproxy (transparent/local mode), Proxyman | Daemons and many CLIs never use the system proxy |
 | Import a TLS key log (`SSLKEYLOGFILE`) and decrypt a pcap without MITM | Wireshark | Inspect pinned apps and TLS without a trusted CA in the path |
 | Scripting hooks on request/response | mitmproxy addons, Burp extensions | Repeatable custom checks and rewrites |
 | Map local / map remote, breakpoints | Charles, Proxyman | Swap a response or edit a request mid-flight |
@@ -410,6 +410,12 @@ Ten milestones, each ending in a working, demoable app. Do them in order; tick t
 - [ ] Bypass list, h2-only clients and h2-only hosts tunnelled raw without decrypting; pinning aborts flagged per host only when the CA is trusted
 - [ ] Leaf minting time measured with one shared leaf key
 
+**M3.5 — Background traffic (decided 2026-10-25)**
+
+- [ ] Each exchange records the client process (name, PID, bundle ID) by mapping the client's loopback source port to its owning process; the lookup goes through `internal/platform`
+- [ ] Background traffic view: exchanges grouped by app, then host; hosts first seen in this project are marked new
+- [ ] App and first-seen columns are filterable in History (`app:brave`, `new:true`)
+
 **M4 — Intercept + Repeater**
 
 - [ ] Intercept toggle holds requests (with timeout); edit, forward, and drop all work
@@ -451,6 +457,11 @@ Ten milestones, each ending in a working, demoable app. Do them in order; tick t
 - [ ] MCP active tools (send_request, run_scan) with scope enforced in the engine and UI confirm
 - [ ] mTLS client certs per host; session macros; remaining Intruder attack types
 - [ ] Optional: Claude API assistant (off by default); signed `.app`
+
+**M9 — Transparent capture (decided 2026-10-25)**
+
+- [ ] Capture apps that ignore proxy settings: macOS Network Extension (or a `pf` redirect for a first version), opt-in with admin approval, and easy to turn off
+- [ ] Captured flows get the same decrypt / bypass / pinning decisions and process attribution as proxied ones
 
 **Later — Cyber Verification (not a build task)**
 
