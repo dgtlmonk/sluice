@@ -32,6 +32,8 @@ func fullExchange(id int64) Exchange {
 		RespSize:  7,
 		Err:       "bad gateway: connection refused",
 		Tool:      "proxy",
+		IsLLM:     true,
+		LLMReason: "path,sse",
 		Request: &Message{
 			RawHeaders: []byte("POST http://origin.test:8080/v1/items HTTP/1.1\r\nCookie: s=1\r\nTransfer-Encoding: chunked\r\n\r\n"),
 			RawBody:    []byte("b\r\nhello world\r\n0\r\n\r\n\x00\xff"), // binary-safe
@@ -177,6 +179,53 @@ func TestMigrateFromV1(t *testing.T) {
 	}
 	if got, _ := s.GetExchange(ctx, 8); got.Err != ex.Err {
 		t.Fatalf("error column after migration: %q", got.Err)
+	}
+}
+
+// A version 2 project (M2 before LLM flagging) gains llm_reason; old rows
+// read it as empty and keep their is_llm value.
+func TestMigrateFromV2(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "p.sluice")
+	key := newKey(t)
+	if err := createPrivateFile(path); err != nil {
+		t.Fatal(err)
+	}
+	db, err := driver.Open(buildDSN(path), connInit(hex.EncodeToString(key)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, q := range []string{
+		"PRAGMA journal_mode = WAL",
+		migrations[0],
+		migrations[1],
+		"PRAGMA user_version = 2",
+		`INSERT INTO exchanges (id, started_at, scheme, host, port, method, path, tool, is_llm)
+		 VALUES (7, 1000, 'http', 'old.test', 80, 'GET', '/', 'proxy', 1)`,
+	} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s := openStore(t, path, key)
+	var v int
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&v); err != nil || v != schemaVersion {
+		t.Fatalf("user_version = %d, %v", v, err)
+	}
+	got, err := s.GetExchange(ctx, 7)
+	if err != nil || !got.IsLLM || got.LLMReason != "" {
+		t.Fatalf("old row: %+v, %v", got, err)
+	}
+	ex := fullExchange(8)
+	if err := s.InsertBatch(ctx, []Exchange{ex}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetExchange(ctx, 8); got.LLMReason != ex.LLMReason {
+		t.Fatalf("llm_reason after migration: %q", got.LLMReason)
 	}
 }
 

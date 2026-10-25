@@ -28,6 +28,7 @@ type Exchange struct {
 	MIME       string `json:"mime"`
 	DurationMs int    `json:"durationMs"`
 	IsLLM      bool   `json:"isLLM"`
+	LLMReason  string `json:"llmReason"` // detection rules that matched, e.g. "path,sse"
 }
 
 // Detail is the raw request and response text shown when a row is selected.
@@ -131,6 +132,7 @@ func (g Generator) Exchange(id int64, startedAt time.Time) Exchange {
 		MIME:       mime,
 		DurationMs: duration,
 		IsLLM:      ep.llm,
+		LLMReason:  synthReason(ep.llm),
 	}
 }
 
@@ -281,4 +283,13 @@ func (g Generator) Produce(ctx context.Context, ratePerSec int, nextID func() in
 			}
 		}
 	}
+}
+
+// synthReason labels fake LLM rows as matched by the path rule, which is what
+// the real detector would say for these endpoints (all but Gemini are known paths).
+func synthReason(llm bool) string {
+	if llm {
+		return "path"
+	}
+	return ""
 }

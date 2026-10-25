@@ -47,7 +47,7 @@ const setupTimeout = 30 * time.Second
 
 // schemaVersion is stored in PRAGMA user_version once every migration has
 // run. It equals len(migrations).
-const schemaVersion = 2
+const schemaVersion = 3
 
 //go:embed schema.sql
 var schemaSQL string
@@ -61,9 +61,13 @@ var schemaSQL string
 //     SQLite's ALTER TABLE ADD COLUMN only rewrites the schema entry, not the
 //     rows: existing rows read the new column as NULL, so this is cheap even
 //     on a large history.
+//   - 2 -> 3: M2 adds exchanges.llm_reason, which LLM-detection rules flagged
+//     the row ("path", "json", "sse", comma-separated). Same cheap ALTER;
+//     old rows read NULL, meaning "not recorded".
 var migrations = []string{
 	schemaSQL,
 	`ALTER TABLE exchanges ADD COLUMN error TEXT;`,
+	`ALTER TABLE exchanges ADD COLUMN llm_reason TEXT;`,
 }
 
 var (

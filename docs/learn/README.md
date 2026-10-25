@@ -11,3 +11,4 @@ Sluice is a learning build. Each core feature gets one short page: the idea, why
 | 05 | [The storage path: lossless history, encrypted at rest](05-storage-path.md) | M2 |
 | 06 | [Why a proxy: seeing traffic versus changing it](06-why-a-proxy.md) | M2 |
 | 07 | [Raw versus parsed: what the detail pane shows, and why](07-raw-vs-parsed.md) | M2 |
+| 08 | [Spotting LLM traffic: what it looks like, and why a proxy flags it](08-llm-traffic.md) | M2 |

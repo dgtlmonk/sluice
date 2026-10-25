@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dgtlmonk/sluice/internal/detect"
 	"github.com/dgtlmonk/sluice/internal/engine"
 	"github.com/dgtlmonk/sluice/internal/live"
 	"github.com/dgtlmonk/sluice/internal/storage"
@@ -216,6 +217,7 @@ func (b *proxyBridge) start(ctx context.Context, emit func([]synth.Exchange), on
 func (b *proxyBridge) complete(ex engine.Exchange) {
 	req, resp := b.capture.Finish(ex.ID)
 	host, port := splitHostPort(ex.Host)
+	llmReason := detectLLM(ex.Path, req, resp)
 	id := b.newID()
 	b.feed.Publish(synth.Exchange{
 		ID:         id,
@@ -229,6 +231,8 @@ func (b *proxyBridge) complete(ex engine.Exchange) {
 		ReqSize:    int(ex.ReqBytes),
 		RespSize:   int(ex.RespBytes),
 		DurationMs: int(ex.Duration.Milliseconds()),
+		IsLLM:      llmReason != "",
+		LLMReason:  llmReason,
 	})
 	b.mu.Lock()
 	w := b.writer
@@ -247,10 +251,26 @@ func (b *proxyBridge) complete(ex engine.Exchange) {
 		RespSize:  ex.RespBytes,
 		Err:       ex.Err,
 		Tool:      "proxy",
-		IsLLM:     false, // the basic LLM flag is a separate M2 task
+		IsLLM:     llmReason != "",
+		LLMReason: llmReason,
 		Request:   req,
 		Response:  resp,
 	})
+}
+
+// detectLLM runs the passive LLM detector over the captured messages. It
+// runs on the connection goroutine after the exchange has been forwarded,
+// so it can delay the next request on that connection but never the bytes
+// already sent. It is bounded (detect.MaxJSONBody) and cannot fail.
+func detectLLM(path string, req, resp *storage.Message) string {
+	in := detect.Input{Path: path}
+	if req != nil {
+		in.ReqHead, in.ReqBody, in.ReqBodyCut = req.RawHeaders, req.RawBody, req.BodyTruncated
+	}
+	if resp != nil {
+		in.RespHead = resp.RawHeaders
+	}
+	return detect.LLM(in)
 }
 
 // listenReason turns a listen error into a short human reason.
@@ -365,6 +385,7 @@ func rowFromStored(ex storage.Exchange) synth.Exchange {
 		RespSize:   int(ex.RespSize),
 		DurationMs: int(ex.Duration.Milliseconds()),
 		IsLLM:      ex.IsLLM,
+		LLMReason:  ex.LLMReason,
 	}
 }
 

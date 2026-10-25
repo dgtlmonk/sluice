@@ -34,6 +34,7 @@ type Exchange struct {
 	Err       string // proxy-side failure, empty on success
 	Tool      string
 	IsLLM     bool
+	LLMReason string   // which detection rules matched, e.g. "path,sse"; empty if none
 	Request   *Message // nil if not captured
 	Response  *Message // nil if not captured
 }
@@ -98,10 +99,10 @@ func insertTx(ctx context.Context, tx *sql.Tx, ex Exchange) (int64, error) {
 	}
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO exchanges (id, started_at, duration_ms, scheme, host, port, method, path,
-		                        status, req_size, resp_size, error, tool, is_llm)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                        status, req_size, resp_size, error, tool, is_llm, llm_reason)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, ex.StartedAt.UnixMilli(), ex.Duration.Milliseconds(), ex.Scheme, ex.Host, ex.Port,
-		ex.Method, ex.Path, ex.Status, ex.ReqSize, ex.RespSize, nullIfEmpty(ex.Err), ex.Tool, ex.IsLLM)
+		ex.Method, ex.Path, ex.Status, ex.ReqSize, ex.RespSize, nullIfEmpty(ex.Err), ex.Tool, ex.IsLLM, nullIfEmpty(ex.LLMReason))
 	if err != nil {
 		return 0, fmt.Errorf("storage: insert exchange: %w", err)
 	}
@@ -130,7 +131,7 @@ func insertTx(ctx context.Context, tx *sql.Tx, ex Exchange) (int64, error) {
 // scanExchange reads them in this order.
 const exchangeColumns = `id, started_at, COALESCE(duration_ms, 0), scheme, host, port, method, path,
 	COALESCE(status, 0), COALESCE(req_size, 0), COALESCE(resp_size, 0), COALESCE(error, ''),
-	tool, COALESCE(is_llm, 0)`
+	tool, COALESCE(is_llm, 0), COALESCE(llm_reason, '')`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -138,7 +139,7 @@ func scanExchange(r scanner) (Exchange, error) {
 	var ex Exchange
 	var startedMs, durMs int64
 	if err := r.Scan(&ex.ID, &startedMs, &durMs, &ex.Scheme, &ex.Host, &ex.Port, &ex.Method, &ex.Path,
-		&ex.Status, &ex.ReqSize, &ex.RespSize, &ex.Err, &ex.Tool, &ex.IsLLM); err != nil {
+		&ex.Status, &ex.ReqSize, &ex.RespSize, &ex.Err, &ex.Tool, &ex.IsLLM, &ex.LLMReason); err != nil {
 		return Exchange{}, err
 	}
 	ex.StartedAt = time.UnixMilli(startedMs)

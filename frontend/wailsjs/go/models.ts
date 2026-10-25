@@ -232,6 +232,7 @@ export namespace synth {
 	    mime: string;
 	    durationMs: number;
 	    isLLM: boolean;
+	    llmReason: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Exchange(source);
@@ -252,6 +253,7 @@ export namespace synth {
 	        this.mime = source["mime"];
 	        this.durationMs = source["durationMs"];
 	        this.isLLM = source["isLLM"];
+	        this.llmReason = source["llmReason"];
 	    }
 	}
 

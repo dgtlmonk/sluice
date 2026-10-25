@@ -27,7 +27,12 @@ const columns = helper.columns([
   helper.accessor('isLLM', {
     header: 'LLM',
     size: 52,
-    cell: (info) => (info.getValue() ? <span className="llm-flag">LLM</span> : null),
+    cell: (info) =>
+      info.getValue() ? (
+        <span className="llm-flag" title={llmTooltip(info.row.original.llmReason)}>
+          LLM
+        </span>
+      ) : null,
   }),
 ])
 
@@ -195,4 +200,16 @@ function clock(unixMs: number): string {
   const d = new Date(unixMs)
   const ms = d.getMilliseconds()
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${ms < 10 ? '00' : ms < 100 ? '0' : ''}${ms}`
+}
+
+const LLM_RULES: Readonly<Record<string, string>> = {
+  path: 'known LLM API path',
+  json: 'chat/completion JSON request (model + messages/prompt)',
+  sse: 'text/event-stream response',
+}
+
+/** Tooltip for the LLM badge: which detection rules matched (e.g. "path,sse"). */
+function llmTooltip(reason: string | undefined): string {
+  if (!reason) return 'LLM traffic'
+  return 'LLM: ' + reason.split(',').map((r) => LLM_RULES[r] ?? r).join('; ')
 }

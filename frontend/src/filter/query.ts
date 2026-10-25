@@ -11,6 +11,8 @@
  *   - `text`          case-insensitive substring of method, host, path, status or MIME.
  *   - `field:value`   host / path / method / mime: case-insensitive substring of that field.
  *   - `status:404`    exact status code; `status:4xx` a whole class (1xx..5xx).
+ *   - `llm:json`      LLM rows flagged by that detection rule (path / json / sse);
+ *                     `llm:any` (or `llm:yes`) every LLM row. `-llm:any` hides them.
  *   - `-token`        negates any of the above.
  *   - An unknown field (`foo:bar`) or a malformed status (`status:4x`) is not an
  *     error: the whole token is used as a plain substring instead.
@@ -26,6 +28,8 @@ export type FilterableRow = {
   readonly status: number
   readonly mime: string
   readonly isLLM: boolean
+  /** Detection rules that flagged the row, comma-separated ("path,sse"); empty if none. */
+  readonly llmReason: string
 }
 
 const TEXT_FIELDS = ['host', 'path', 'method', 'mime'] as const
@@ -36,6 +40,7 @@ export type Term =
   | { readonly kind: 'field'; readonly negate: boolean; readonly field: TextField; readonly needle: string }
   | { readonly kind: 'status'; readonly negate: boolean; readonly code: number }
   | { readonly kind: 'statusClass'; readonly negate: boolean; readonly hundreds: number }
+  | { readonly kind: 'llm'; readonly negate: boolean; readonly rule: string | null }
 
 export type ParsedQuery = { readonly terms: readonly Term[] }
 
@@ -50,6 +55,7 @@ export const QUERY_HELP: readonly string[] = [
   'host: path: method: mime: — substring of that field',
   'status:404 — exact code',
   'status:5xx — whole class',
+  'llm:any — LLM rows; llm:path, llm:json, llm:sse — by detection rule',
   '-term — negate, e.g. -method:OPTIONS',
   'Case-insensitive. Unknown fields match as plain text.',
   '/ or ⌘F to focus, Esc to clear',
@@ -75,6 +81,11 @@ function parseToken(token: string): Term | null {
     const value = body.slice(colon + 1)
     if (isTextField(field)) {
       return value === '' ? null : { kind: 'field', negate, field, needle: value.toLowerCase() }
+    }
+    if (field === 'llm') {
+      if (value === '') return null
+      const rule = value.toLowerCase()
+      return { kind: 'llm', negate, rule: rule === 'any' || rule === 'yes' ? null : rule }
     }
     if (field === 'status') {
       if (value === '') return null
@@ -121,6 +132,8 @@ function testTerm(row: FilterableRow, term: Term): boolean {
       return row.status === term.code
     case 'statusClass':
       return Math.floor(row.status / 100) === term.hundreds
+    case 'llm':
+      return row.isLLM && (term.rule === null || (row.llmReason ?? '').split(',').includes(term.rule))
   }
 }
 

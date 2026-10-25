@@ -186,6 +186,7 @@ The main goal is functionality. These items are tracked for a later optimization
 - **Storage capture (M2):** request/response bodies are buffered in memory per in-flight exchange (up to the 32 MB cap each) until the exchange finishes, and the queue holds up to 512 MiB of waiting rows. Stream large bodies into SQLite incrementally (blob I/O) instead, and size the queue budget from measurements.
 - **Capture lock (M2):** one mutex guards every in-flight capture, so body taps on many connections contend on it; shard by exchange id or keep a per-exchange buffer owned by the connection goroutine.
 - **Writer batching (M2):** fixed 256-row batches with a plain fsync per commit; tune batch size/time window and consider `PRAGMA synchronous = NORMAL` under WAL after measuring.
+- **LLM detection (M2):** `detect.LLM` runs on the connection goroutine after forwarding, so a large JSON body (up to the 1 MiB cap) delays the next keep-alive request on that connection; it also allocates about 3x the body. Move it to the storage writer or a worker pool, and decode with a streaming token reader.
 - **Measure:** engine heap (`runtime.MemStats`) and webview RSS under sustained traffic, e.g. 1M synthetic exchanges.
 
 ## Storage

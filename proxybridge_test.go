@@ -225,6 +225,76 @@ func TestBridgePersistsRawCapture(t *testing.T) {
 	}
 }
 
+// chunkedReader hides its length from net/http, which then sends the body
+// with Transfer-Encoding: chunked.
+type chunkedReader struct{ r io.Reader }
+
+func (c chunkedReader) Read(p []byte) (int, error) { return c.r.Read(p) }
+
+// LLM detection runs before both paths: the live row and the stored row
+// carry the same flag and reason, for each of the three rules.
+func TestBridgeFlagsLLMTraffic(t *testing.T) {
+	origin, stopOrigin := testorigin.Start()
+	defer stopOrigin()
+	store := openTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	b := newTestBridge("127.0.0.1:0")
+	b.useStore(store, "")
+	rows := make(chan synth.Exchange, 16)
+	st := b.start(ctx, func(batch []synth.Exchange) {
+		for _, r := range batch {
+			rows <- r
+		}
+	}, noStorageErrors)
+	defer func() { cancel(); _ = b.stop() }()
+
+	pu, _ := url.Parse("http://" + st.Addr)
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
+	defer client.CloseIdleConnections()
+	const chat = `{"model":"llama3","messages":[{"role":"user","content":"hi"}]}`
+	base := "http://" + origin
+	cases := []struct {
+		name, method, target string
+		body                 io.Reader
+		want                 string
+	}{
+		{"plain", "GET", base + testorigin.PathContentLength, nil, ""},
+		{"sse", "GET", base + testorigin.PathSSE, nil, "sse"},
+		// The origin answers 405 to a POST here; the request still counts.
+		{"json content-length", "POST", base + testorigin.PathContentLength, strings.NewReader(chat), "json"},
+		{"json chunked", "POST", base + testorigin.PathContentLength, chunkedReader{strings.NewReader(chat)}, "json"},
+		{"path", "GET", base + "/api/chat?x=1", nil, "path"},
+	}
+	for _, c := range cases {
+		req, err := http.NewRequest(c.method, c.target, c.body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+
+		select {
+		case r := <-rows:
+			if r.LLMReason != c.want || r.IsLLM != (c.want != "") {
+				t.Fatalf("%s: live row isLLM=%v reason=%q, want %q", c.name, r.IsLLM, r.LLMReason, c.want)
+			}
+			stored := waitDetail(t, b, r.ID)
+			if stored.LLMReason != c.want || stored.IsLLM != r.IsLLM {
+				t.Fatalf("%s: stored isLLM=%v reason=%q, want %q", c.name, stored.IsLLM, stored.LLMReason, c.want)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s: no row emitted", c.name)
+		}
+	}
+}
+
 // stalledStore never finishes a write until released: a hung disk.
 type stalledStore struct {
 	release chan struct{}
