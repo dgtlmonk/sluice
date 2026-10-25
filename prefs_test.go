@@ -120,3 +120,13 @@ func TestPrefsFilePathEnv(t *testing.T) {
 		t.Fatalf("got %q %v", got, err)
 	}
 }
+
+func TestAppStepFontSize(t *testing.T) {
+	a := &App{prefs: &prefsStore{path: filepath.Join(t.TempDir(), "prefs.json"), cur: defaultPrefs()}}
+	for _, tc := range []struct{ delta, want int }{{+1, 13}, {+1, 14}, {-1, 13}, {0, defaultFontSize}, {-1, 11}, {-1, 11}} {
+		got, err := a.StepFontSize(tc.delta)
+		if err != nil || got.FontSize != tc.want {
+			t.Fatalf("StepFontSize(%d) = %d, %v; want %d", tc.delta, got.FontSize, err, tc.want)
+		}
+	}
+}

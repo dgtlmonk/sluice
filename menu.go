@@ -61,16 +61,14 @@ func (a *App) buildMenu() *menu.Menu {
 	root.Append(menu.EditMenu())
 
 	view := root.AddSubmenu("View")
+	// Ctrl+= / Ctrl+- / Ctrl+0 are handled in the webview (useFontShortcuts),
+	// because a menu item takes only one accelerator.
 	step := func(delta int) menu.Callback {
-		return func(*menu.CallbackData) {
-			_, _ = a.changePrefs(func(p Prefs) Prefs { p.FontSize = stepFontSize(p.FontSize, delta); return p })
-		}
+		return func(*menu.CallbackData) { _, _ = a.StepFontSize(delta) }
 	}
 	view.AddText("Bigger Text", keys.CmdOrCtrl("="), step(+1))
 	view.AddText("Smaller Text", keys.CmdOrCtrl("-"), step(-1))
-	view.AddText("Actual Size", keys.CmdOrCtrl("0"), func(*menu.CallbackData) {
-		_, _ = a.changePrefs(func(p Prefs) Prefs { p.FontSize = defaultFontSize; return p })
-	})
+	view.AddText("Actual Size", keys.CmdOrCtrl("0"), step(0))
 	view.AddSeparator()
 	themeMenu := view.AddSubmenu("Theme")
 	cur := a.prefs.get().Theme

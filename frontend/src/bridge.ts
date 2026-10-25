@@ -13,6 +13,7 @@ import {
   SetBypassHosts,
   SetPrefs,
   StartStream,
+  StepFontSize,
   StopStream,
   TLSHosts,
 } from '../wailsjs/go/main/App'
@@ -128,6 +129,9 @@ export function subscribePrefs(): () => void {
 
 /** Validates, applies and saves; resolves to the applied prefs. Go broadcasts the change. */
 export const savePrefs = (p: Prefs): Promise<Prefs> => SetPrefs(p).then((r) => r as Prefs)
+
+/** One text-size step up (+1), down (-1), or reset (0). Go broadcasts the change. */
+export const stepFontSize = (delta: number): Promise<Prefs> => StepFontSize(delta).then((r) => r as Prefs)
 
 /** The App menu's Settings… item (Cmd+,). */
 export const onMenuSettings = (open: () => void): (() => void) => EventsOn(EVENT_MENU_SETTINGS, open)

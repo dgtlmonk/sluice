@@ -118,7 +118,7 @@ button.danger {
 
 .workspace {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(140px, 34%);
+  /* rows set inline from the splitter: history | bar | detail */
   min-height: 0;
 }
 
@@ -477,7 +477,6 @@ button.toggle.llm.on {
   display: grid;
   grid-template-columns: 1fr 1fr;
   min-height: 0;
-  border-top: 1px solid var(--border);
 }
 
 .detail-empty {
@@ -494,9 +493,6 @@ button.toggle.llm.on {
   min-height: 0;
 }
 
-.detail-col + .detail-col {
-  border-left: 1px solid var(--border);
-}
 
 .detail-col header {
   padding: 4px 10px;
@@ -709,4 +705,38 @@ button.toggle.llm.on {
   align-items: center;
   gap: 6px 12px;
   margin: 8px 0;
+}
+
+/* Splitters: a 1px line with a wider invisible grab area. */
+.splitter {
+  position: relative;
+  background: var(--border);
+  z-index: 1;
+}
+.splitter::after {
+  content: '';
+  position: absolute;
+}
+.splitter-horizontal {
+  height: 1px;
+  cursor: row-resize;
+}
+.splitter-horizontal::after {
+  inset: -3px 0;
+}
+.splitter-vertical {
+  width: 1px;
+  cursor: col-resize;
+}
+.splitter-vertical::after {
+  inset: 0 -3px;
+}
+.splitter:hover,
+.splitter:focus-visible {
+  background: var(--accent);
+  outline: none;
+}
+body.resizing {
+  user-select: none;
+  cursor: grabbing;
 }

@@ -191,6 +191,20 @@ func (a *App) SetPrefs(p Prefs) (Prefs, error) {
 	return a.changePrefs(func(Prefs) Prefs { return p })
 }
 
+// StepFontSize moves the text size one offered step up (delta > 0) or down
+// (delta < 0); delta 0 resets it. Shared by the View menu (Cmd) and the
+// webview's Ctrl shortcuts.
+func (a *App) StepFontSize(delta int) (Prefs, error) {
+	return a.changePrefs(func(p Prefs) Prefs {
+		if delta == 0 {
+			p.FontSize = defaultFontSize
+		} else {
+			p.FontSize = stepFontSize(p.FontSize, delta)
+		}
+		return p
+	})
+}
+
 // changePrefs is the one path every change takes (bindings and menu), so the
 // file, the menu checkmarks and the UI never disagree.
 func (a *App) changePrefs(fn func(Prefs) Prefs) (Prefs, error) {

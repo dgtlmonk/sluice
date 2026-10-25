@@ -66,6 +66,10 @@ export function Stats() {
   return window['go']['main']['App']['Stats']();
 }
 
+export function StepFontSize(arg1) {
+  return window['go']['main']['App']['StepFontSize'](arg1);
+}
+
 export function StopStream() {
   return window['go']['main']['App']['StopStream']();
 }

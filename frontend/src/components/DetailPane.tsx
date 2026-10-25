@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ExchangeDetail, ExchangeTLS, type ExchangeTLSState, type ExchangeView, type MessageView } from '../bridge'
 import { useExchangeStore } from '../store/exchanges'
 import { statusText } from '../view/status'
+import { Splitter, useSplit } from './Splitter'
 
 type Tab = 'raw' | 'headers'
 type Loaded = { view: ExchangeView; tls: ExchangeTLSState } | { error: string }
@@ -18,6 +19,7 @@ export function DetailPane() {
   const selected = useExchangeStore((s) => s.selected)
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [tab, setTab] = useState<Tab>('raw')
+  const cols = useSplit('sluice.split.reqres', 0.5, 0.15, 0.85)
 
   useEffect(() => {
     setLoaded(null)
@@ -55,13 +57,14 @@ export function DetailPane() {
           ))}
       </nav>
       {tls && <TLSStrip tls={tls} />}
-      <div className="detail-cols">
+      <div className="detail-cols" style={{ gridTemplateColumns: `minmax(160px, ${cols.fraction}fr) auto minmax(160px, ${1 - cols.fraction}fr)` }}>
         <div className="detail-col">
           <header>
             Request <span className="muted">#{selected.id}</span>
           </header>
           {view && <Message m={view.request} tab={tab} />}
         </div>
+        <Splitter orientation="vertical" split={cols} label="Resize request and response" />
         <div className="detail-col">
           <header>
             Response{' '}

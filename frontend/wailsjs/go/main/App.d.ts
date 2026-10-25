@@ -36,6 +36,8 @@ export function StartStream(arg1:number):Promise<void>;
 
 export function Stats():Promise<main.AppStats>;
 
+export function StepFontSize(arg1:number):Promise<main.Prefs>;
+
 export function StopStream():Promise<void>;
 
 export function TLSHosts():Promise<Array<main.TLSHost>>;
