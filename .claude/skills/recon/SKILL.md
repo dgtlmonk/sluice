@@ -56,11 +56,20 @@ Brave profile. Delete `$SCRATCH/brave-recon` after.
 
 ## Inspect the app
 
-Screenshot the app window and read it:
+Screenshot ONLY the Sluice window and read it. Never fall back to a full-screen capture: it grabs the
+user's desktop, files and other apps (privacy). If no window id is found, ask the user for a screenshot.
 ```
-screencapture -x -o -l "$(osascript -e 'tell application "System Events" to get id of window 1 of process "sluice"' 2>/dev/null)" "$SCRATCH/recon.png" \
-  || screencapture -x "$SCRATCH/recon.png"
+cat > "$SCRATCH/winid.swift" <<'EOF'
+import CoreGraphics
+let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+for w in list where (w["kCGWindowOwnerName"] as? String)?.lowercased() == "sluice" && (w["kCGWindowLayer"] as? Int) == 0 {
+  print(w["kCGWindowNumber"] as! Int); break
+}
+EOF
+ID=$(swift "$SCRATCH/winid.swift") && [ -n "$ID" ] && screencapture -x -o -l "$ID" "$SCRATCH/recon.png"
 ```
+The grid does not auto-scroll; new rows may be below the fold. Use a throwaway `SLUICE_PROJECT` so the
+rows under test are the only rows.
 Then Read the PNG. Click into suspicious rows only through the user, or report them.
 
 ## Anomaly checklist (any hit = not done)
