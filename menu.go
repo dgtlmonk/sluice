@@ -49,6 +49,13 @@ func (a *App) buildMenu() *menu.Menu {
 		}
 	})
 
+	file := root.AddSubmenu("File")
+	file.AddText("Export CA Certificate…", keys.CmdOrCtrl("e"), func(*menu.CallbackData) {
+		if _, err := a.ExportCA(); err != nil {
+			a.showError("Export failed", err)
+		}
+	})
+
 	// Edit role: Undo/Redo/Cut/Copy/Paste/Select All wired to the responder
 	// chain, so the shortcuts work in the webview's text fields and panes.
 	root.Append(menu.EditMenu())
@@ -74,7 +81,15 @@ func (a *App) buildMenu() *menu.Menu {
 		})
 	}
 
+	// Window role: Minimize (Cmd+M), Zoom, Full Screen (Ctrl+Cmd+F).
 	root.Append(menu.WindowMenu())
+
+	help := root.AddSubmenu("Help")
+	help.AddText("Learning Notes", nil, func(*menu.CallbackData) {
+		if ctx := a.uiContext(); ctx != nil {
+			runtime.BrowserOpenURL(ctx, learnNotesURL)
+		}
+	})
 
 	a.menu.mu.Lock()
 	a.menu.root, a.menu.themes = root, themes
@@ -106,6 +121,21 @@ func (a *App) showAbout() {
 		Type:    runtime.InfoDialog,
 		Title:   "About Sluice",
 		Message: "Sluice: a local intercepting proxy for learning HTTP and TLS.\nListens on loopback only.",
+	})
+}
+
+// learnNotesURL is the docs/learn index on GitHub (Help > Learning Notes).
+const learnNotesURL = "https://github.com/dgtlmonk/sluice/tree/main/docs/learn"
+
+func (a *App) showError(title string, err error) {
+	ctx := a.uiContext()
+	if ctx == nil {
+		return
+	}
+	_, _ = runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
+		Type:    runtime.ErrorDialog,
+		Title:   title,
+		Message: err.Error(),
 	})
 }
 

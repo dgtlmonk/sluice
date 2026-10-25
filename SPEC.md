@@ -172,6 +172,20 @@ UI rules:
 - Context menu on any request: Send to Repeater, Send to Fuzzer, Copy as curl, Add host to scope.
 - Native macOS menu bar via the Wails menu API.
 
+## Feature candidates (from other tools)
+
+Ideas worth copying, collected along the way. Not scheduled; each moves into a milestone only when picked. Focus: security testing and defense, especially background and phone-home traffic.
+
+| Idea | Seen in | Why it matters here |
+|------|---------|---------------------|
+| Process name per connection (which app made it) | Little Snitch, LuLu, Proxyman | Background traffic is only useful when you know which app sent it |
+| Background traffic view: group by app and host, mark first-seen hosts | Little Snitch | New phone-home hosts stand out without reading every row |
+| Transparent capture for apps that ignore proxy settings (Network Extension or `pf` redirect) | mitmproxy (transparent/local mode), Proxyman | Daemons and many CLIs never use the system proxy |
+| Import a TLS key log (`SSLKEYLOGFILE`) and decrypt a pcap without MITM | Wireshark | Inspect pinned apps and TLS without a trusted CA in the path |
+| Scripting hooks on request/response | mitmproxy addons, Burp extensions | Repeatable custom checks and rewrites |
+| Map local / map remote, breakpoints | Charles, Proxyman | Swap a response or edit a request mid-flight |
+| Per-app proxy launch helper (start a browser profile pointed at Sluice) | Proxyman | One click instead of a terminal command |
+
 ## Optimization backlog
 
 The main goal is functionality. These items are tracked for a later optimization pass, not milestone gates. Goal: memory efficient, with memory flat as history grows.
