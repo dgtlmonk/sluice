@@ -168,3 +168,5 @@ frontend/dist/
 
 # macOS
 .DS_Store
+frontend/package.json.md5
+.gstack/

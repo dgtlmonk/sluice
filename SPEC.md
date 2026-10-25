@@ -171,6 +171,16 @@ UI rules:
 - Context menu on any request: Send to Repeater, Send to Fuzzer, Copy as curl, Add host to scope.
 - Native macOS menu bar via the Wails menu API.
 
+## Optimization backlog
+
+The main goal is functionality. These items are tracked for a later optimization pass, not milestone gates. Goal: memory efficient, with memory flat as history grows.
+
+- **Webview holds only a window:** grid pages windows from the engine; filter and sort move to SQLite (`WHERE` / `ORDER BY`). Until then the client-side filter/sort holds all rows in the webview; Clear resets it.
+- **Rows carry no bodies** (already true): the detail pane fetches one exchange on demand.
+- **Bounded caches:** upstream connection pool with idle timeout; in-memory leaf-cert cache as an LRU backed by the disk cache.
+- **Frontend tooling:** upgrade Vite 3 to a supported major (dev-server advisory GHSA-67mh-4wv8-2f99).
+- **Measure:** engine heap (`runtime.MemStats`) and webview RSS under sustained traffic, e.g. 1M synthetic exchanges.
+
 ## Storage
 
 One encrypted SQLite file per project (`*.sluice`), mode 0600, written by a single background writer that drains the storage queue in batches.
@@ -364,7 +374,6 @@ Ten milestones, each ending in a working, demoable app. Do them in order; tick t
 - [ ] Exchanges persist to the encrypted store through the lossless storage queue and reload on restart
 - [ ] Basic LLM flag shown in History (paths, JSON shape, SSE content type)
 - [ ] 10k requests in a load test keep the UI responsive, with zero storage drops
-
 **M3 — HTTPS interception**
 
 - [ ] Root CA generated on first run; Settings can install it to the login keychain and export the PEM; trust health check reports installed/trusted

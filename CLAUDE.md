@@ -23,6 +23,7 @@ This is a learning project: explain non-obvious protocol and crypto code in comm
 
 - Engine packages never import UI code; the UI only consumes Wails bindings and events.
 - All OS calls go through `internal/platform` (Keychain, cert trust, system proxy, browser launch).
+- Functionality first. Optimization work (memory, speed) goes on the SPEC.md "Optimization backlog", not into milestones.
 - Traffic forwarding never blocks on observers. The live event path is lossy and counts drops; the storage path is lossless and surfaces any failure as an error.
 
 ## Security

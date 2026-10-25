@@ -1,0 +1,14 @@
+# golangci-lint v2 config. Version pinned in .github/workflows/ci.yml.
+version: "2"
+
+linters:
+  # "standard" = errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    - gosec      # security-focused checks (exec, file modes, crypto/rand, ...)
+    - errorlint  # errors.Is/As instead of == and type assertions on wrapped errors
+    - bodyclose  # unclosed HTTP response bodies
+
+formatters:
+  enable:
+    - gofmt
