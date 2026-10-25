@@ -292,22 +292,23 @@ func (a *App) Stats() AppStats {
 	}
 }
 
-// ExchangeDetail returns the raw request/response text for one exchange.
-// Proxied rows are read from the store; synthetic rows are regenerated from
-// their id.
-func (a *App) ExchangeDetail(id int64) (synth.Detail, error) {
+// ExchangeDetail returns one exchange for the detail pane: raw head and
+// body (display-safe) plus parsed header tables. Proxied rows are read from
+// the store; synthetic rows are regenerated from their id. An id that is in
+// neither is an error.
+func (a *App) ExchangeDetail(id int64) (ExchangeView, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), storeReadTimeout)
 	defer cancel()
-	d, found, err := a.proxy.detail(ctx, id)
+	ex, found, err := a.proxy.detail(ctx, id)
 	switch {
 	case err != nil:
-		return synth.Detail{}, err
+		return ExchangeView{}, err
 	case found:
-		return d, nil
+		return viewFromStored(ex), nil
 	case a.devSynth:
-		return a.gen.Detail(id), nil
+		return viewFromSynth(a.gen.Detail(id)), nil
 	}
-	return synth.Detail{ID: id, Request: "(not in the store yet: the storage writer has not committed this exchange, or it was not saved; see the status bar)"}, nil
+	return ExchangeView{}, fmt.Errorf("exchange %d is not in the store: the storage writer has not committed it yet, or it was not saved (see the status bar)", id)
 }
 
 func sumStats(x, y live.Stats) live.Stats {

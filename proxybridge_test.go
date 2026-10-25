@@ -87,9 +87,9 @@ func TestBridgeEmitsRowForProxiedRequest(t *testing.T) {
 			r.Status != 200 || r.RespSize != len(testorigin.ContentLengthBody) || r.StartedAt == 0 {
 			t.Fatalf("row = %+v", r)
 		}
-		d := waitDetail(t, b, r.ID)
-		if !strings.Contains(d.Request, testorigin.PathContentLength) ||
-			!strings.Contains(d.Response, testorigin.ContentLengthBody) {
+		d := viewFromStored(waitDetail(t, b, r.ID))
+		if !strings.Contains(d.Request.StartLine, testorigin.PathContentLength) ||
+			!strings.Contains(d.Response.Body, testorigin.ContentLengthBody) {
 			t.Fatalf("detail = %+v", d)
 		}
 	case <-time.After(3 * time.Second):
@@ -154,7 +154,7 @@ func TestBridgeStopWithIdleClient(t *testing.T) {
 }
 
 // waitDetail polls until the storage writer has committed id.
-func waitDetail(t *testing.T, b *proxyBridge, id int64) synth.Detail {
+func waitDetail(t *testing.T, b *proxyBridge, id int64) storage.Exchange {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -168,7 +168,7 @@ func waitDetail(t *testing.T, b *proxyBridge, id int64) synth.Detail {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("exchange %d never reached the store", id)
-	return synth.Detail{}
+	return storage.Exchange{}
 }
 
 // proxyGet sends n sequential GETs through the proxy at addr, each within a

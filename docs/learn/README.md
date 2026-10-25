@@ -10,3 +10,4 @@ Sluice is a learning build. Each core feature gets one short page: the idea, why
 | 04 | [Differential fuzzing](04-differential-fuzzing.md) | M1 |
 | 05 | [The storage path: lossless history, encrypted at rest](05-storage-path.md) | M2 |
 | 06 | [Why a proxy: seeing traffic versus changing it](06-why-a-proxy.md) | M2 |
+| 07 | [Raw versus parsed: what the detail pane shows, and why](07-raw-vs-parsed.md) | M2 |

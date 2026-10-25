@@ -12,6 +12,8 @@ const EVENT_STORAGE_ERROR = 'storage:error'
 const HISTORY_ROWS = 10_000 // must not exceed maxHistoryRows in app.go
 
 export type ProxyState = main.ProxyStatus
+export type ExchangeView = main.ExchangeView
+export type MessageView = main.MessageView
 const SEED_CHUNK = 10_000 // must not exceed maxSeedChunk in app.go
 
 /** Subscribes the store to engine batches. Returns the unsubscribe function. */

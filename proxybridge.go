@@ -330,56 +330,24 @@ func (b *proxyBridge) storageStats() StorageStats {
 	return st
 }
 
-// detail reads one exchange from the store and renders it as raw text.
+// detail reads one exchange (metadata and raw messages) from the store.
 // found is false when the id is not in the store (a synthetic row, or one
 // the writer has not committed yet).
-func (b *proxyBridge) detail(ctx context.Context, id int64) (d synth.Detail, found bool, err error) {
+func (b *proxyBridge) detail(ctx context.Context, id int64) (ex storage.Exchange, found bool, err error) {
 	b.mu.Lock()
 	store := b.store
 	b.mu.Unlock()
 	if store == nil {
-		return synth.Detail{}, false, nil
+		return storage.Exchange{}, false, nil
 	}
-	ex, err := store.GetExchange(ctx, id)
+	ex, err = store.GetExchange(ctx, id)
 	if errors.Is(err, storage.ErrNotFound) {
-		return synth.Detail{}, false, nil
+		return storage.Exchange{}, false, nil
 	}
 	if err != nil {
-		return synth.Detail{}, false, err
+		return storage.Exchange{}, false, err
 	}
-	resp := renderMessage(ex.Response)
-	if ex.Err != "" {
-		resp += "\n\n(proxy error: " + ex.Err + ")"
-	}
-	return synth.Detail{ID: id, Request: renderMessage(ex.Request), Response: resp}, true, nil
-}
-
-// maxDetailBody caps how much of a stored body the detail pane receives in
-// one bridge message; the store keeps the whole capped body.
-const maxDetailBody = 256 << 10
-
-// renderMessage shows head + body as captured. This stays inside the app
-// (the user's own view of their own store), so nothing is redacted here;
-// redaction applies to paths that leave the store (exports, MCP, LLMs).
-func renderMessage(m *storage.Message) string {
-	if m == nil {
-		return "(not captured)"
-	}
-	var sb strings.Builder
-	sb.Write(m.RawHeaders)
-	body := m.RawBody
-	cut := false
-	if len(body) > maxDetailBody {
-		body, cut = body[:maxDetailBody], true
-	}
-	sb.Write(body)
-	switch {
-	case cut:
-		fmt.Fprintf(&sb, "\n\n(showing %d of %d stored body bytes)", maxDetailBody, len(m.RawBody))
-	case m.BodyTruncated:
-		fmt.Fprintf(&sb, "\n\n(stored body truncated at %d bytes; the full body was forwarded)", len(m.RawBody))
-	}
-	return sb.String()
+	return ex, true, nil
 }
 
 // rowFromStored maps a stored exchange onto the grid row shape.
