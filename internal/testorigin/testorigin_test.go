@@ -213,3 +213,29 @@ func TestCloseHEADHasNoBody(t *testing.T) {
 		t.Fatalf("HEAD got body %q", body)
 	}
 }
+
+func TestChatAcceptsChunkedAndContentLengthBodies(t *testing.T) {
+	addr := start(t)
+	for _, te := range []bool{false, true} {
+		c := dial(t, addr)
+		req := "POST " + PathChat + " HTTP/1.1\r\nHost: origin\r\nContent-Type: application/json\r\n"
+		body := `{"model":"m","messages":[]}`
+		if te {
+			req += "Transfer-Encoding: chunked\r\n\r\n" + strconv.FormatInt(int64(len(body)), 16) + "\r\n" + body + "\r\n0\r\n\r\n"
+		} else {
+			req += "Content-Length: " + strconv.Itoa(len(body)) + "\r\n\r\n" + body
+		}
+		if _, err := io.WriteString(c, req); err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != 200 || string(got) != ChatReply || resp.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("chunked=%v: status %d body %q", te, resp.StatusCode, got)
+		}
+	}
+}

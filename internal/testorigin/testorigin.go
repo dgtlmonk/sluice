@@ -19,10 +19,15 @@
 //	GET /sse             text/event-stream; SSEEvents are flushed one by one
 //	                     with SSEDelay between them, so tests can prove events
 //	                     arrive incrementally rather than buffered.
+//	POST /v1/chat/completions
+//	                     LLM-shaped endpoint: reads the whole request body
+//	                     (Content-Length or chunked) and answers ChatReply
+//	                     as JSON with Content-Length. Used by load tests.
 package testorigin
 
 import (
 	"bufio"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -37,6 +42,7 @@ const (
 	PathKeepAlive     = "/keep-alive"
 	PathClose         = "/close"
 	PathSSE           = "/sse"
+	PathChat          = "/v1/chat/completions"
 )
 
 // Deterministic bodies.
@@ -45,6 +51,7 @@ const (
 	KeepAliveBody     = "keep-alive ok\n"
 	CloseBody         = "close-delimited body: read until EOF\n"
 	SSEDelay          = 50 * time.Millisecond
+	ChatReply         = `{"id":"cmpl-test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}]}`
 )
 
 // ChunkParts are written and flushed one at a time by /chunked.
@@ -76,6 +83,7 @@ func Handler() http.Handler {
 	mux.HandleFunc("GET "+PathKeepAlive, handleKeepAlive)
 	mux.HandleFunc("GET "+PathClose, handleClose)
 	mux.HandleFunc("GET "+PathSSE, handleSSE)
+	mux.HandleFunc("POST "+PathChat, handleChat)
 	return mux
 }
 
@@ -145,6 +153,18 @@ func writeRawClose(buf *bufio.ReadWriter, headOnly bool) {
 		_, _ = buf.WriteString(CloseBody)
 	}
 	_ = buf.Flush()
+}
+
+// handleChat drains the request body first, so the proxy has forwarded all
+// of it (keep-alive stays usable), then answers a fixed JSON completion.
+func handleChat(w http.ResponseWriter, r *http.Request) {
+	if _, err := io.Copy(io.Discard, r.Body); err != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(ChatReply)))
+	_, _ = w.Write([]byte(ChatReply))
 }
 
 func handleSSE(w http.ResponseWriter, r *http.Request) {
