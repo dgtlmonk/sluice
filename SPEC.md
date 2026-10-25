@@ -133,7 +133,7 @@ Pinning detection: when the client aborts the handshake right after receiving th
 
 - RSA 2048, 10-year validity, `CA:true` basic constraint, generated on first run. One algorithm, one code path.
 - Leaf certs: SAN = host, about 397 days validity, random serial, SKI/AKI set, `serverAuth` EKU. That passes both of Apple's limits: 825 days for user-added roots and 398 days for public roots.
-- All leaf certs share one leaf key pair, generated once and stored with the CA. Only the certificate is minted per host. Measured at M3 (Apple M3 Max, go1.26.10, `-count=5`): minting with the shared key takes about 0.94 ms (±5%); a fresh RSA 2048 key per host takes about 48 ms (±10%, 52x slower), so per-host RSA keys would stall a page with many hosts. A fresh ECDSA P-256 key per host costs about the same as the shared key (0.90 ms), because the root's RSA signature dominates. A leaf-cache hit takes about 94 ns. Keep the shared key.
+- All leaf certs share one leaf key pair, generated once and stored with the CA. Only the certificate is minted per host. Measured at M3 (Apple M3 Max, go1.26.10, `-count=5`): minting with the shared key takes about 0.94 ms (±5%); a fresh RSA 2048 key per host takes about 48 ms (sd 10%, 52x slower), so per-host RSA keys would stall a page with many hosts. A fresh ECDSA P-256 key per host costs about the same as the shared key (0.90 ms), because the root's RSA signature dominates. A leaf-cache hit takes about 94 ns. Keep the shared key.
 - CA private key stored in the per-user app data folder, mode 0600, encrypted with a passphrase kept in the macOS Keychain. Never log or export it except via an explicit "Export CA" action.
 
 **Pipeline**
