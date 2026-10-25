@@ -3,6 +3,7 @@ package engine
 import (
 	"bufio"
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -31,6 +32,7 @@ type Exchange struct {
 	ID        uint64
 	Started   time.Time
 	Method    string
+	Scheme    string // "http", or "https" inside a decrypted CONNECT tunnel
 	Host      string // authority from the request target
 	Path      string // origin-form path, query included
 	Status    int    // status sent to the client; 0 if none was sent
@@ -54,6 +56,14 @@ type Config struct {
 	// (The origin's response head is capped the same way by ResponseHeaderTimeout.)
 	HeadReadTimeout time.Duration
 	MaxIdlePerHost  int
+
+	// LeafCerts, if set, turns on HTTPS interception: CONNECT tunnels are
+	// decrypted with leaf certificates it mints. Nil refuses CONNECT (501).
+	LeafCerts LeafMinter
+	// UpstreamRootCAs verifies origin certificates on the upstream TLS leg.
+	// Nil means the system roots, which is what production wants; tests
+	// pass the test origin's own CA.
+	UpstreamRootCAs *x509.CertPool
 
 	// Events, if set, receives one Exchange per request. Publishing never
 	// blocks: when the feed is full the event is dropped and counted.
@@ -156,11 +166,13 @@ func Listen(addr string, allowNonLoopback bool) (net.Listener, error) {
 	return net.Listen("tcp", addr)
 }
 
-// Server is the plain-HTTP forward proxy: one goroutine per client
+// Server is the forward proxy (plain HTTP, plus decrypted CONNECT tunnels
+// when Config.LeafCerts is set): one goroutine per client
 // connection, keep-alive on both legs, streaming bodies.
 type Server struct {
 	cfg    Config
 	pool   *connPool
+	certs  *certCache // nil when interception is off
 	nextID atomic.Uint64
 
 	mu      sync.Mutex
@@ -173,8 +185,13 @@ type Server struct {
 // NewServer returns a Server; call Serve to start it.
 func NewServer(cfg Config) *Server {
 	cfg = cfg.withDefaults()
+	var certs *certCache
+	if cfg.LeafCerts != nil {
+		certs = newCertCache(cfg.LeafCerts)
+	}
 	return &Server{
 		cfg:   cfg,
+		certs: certs,
 		pool:  newConnPool(cfg.MaxIdlePerHost, cfg.UpstreamIdleTimeout),
 		conns: map[*clientConn]struct{}{},
 	}

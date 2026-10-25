@@ -46,14 +46,15 @@ func (u *upstreamConn) quiet() bool {
 	return errors.As(err, &ne) && ne.Timeout()
 }
 
-// poolKey identifies interchangeable connections. tls is always false until
-// M3; it is in the key now so an http and an https connection to the same
-// host:port can never be handed out for each other.
-func poolKey(addr string, tls bool) string {
-	if tls {
-		return addr + ":tls"
+// poolKey identifies interchangeable connections. TLS is in the key so an
+// http and an https connection to the same host:port are never handed out
+// for each other, and so is the server name: a TLS conn was verified for
+// one name (SNI), and reusing it for another would skip that check.
+func poolKey(t proxyTarget) string {
+	if t.tls {
+		return t.addr + "|tls|" + t.serverName
 	}
-	return addr + ":plain"
+	return t.addr + "|plain"
 }
 
 // connPool keeps idle upstream connections for reuse (keep-alive on the

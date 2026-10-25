@@ -286,7 +286,7 @@ func TestProxyRejectsUnsupportedTargets(t *testing.T) {
 	}{
 		{"origin-form", "GET / HTTP/1.1\r\nHost: " + origin + "\r\n\r\n", 400},
 		{"https", get("https://" + origin + "/"), 400},
-		{"connect", "CONNECT " + origin + " HTTP/1.1\r\nHost: " + origin + "\r\n\r\n", 405},
+		{"connect without CA", "CONNECT " + origin + " HTTP/1.1\r\nHost: " + origin + "\r\n\r\n", 501},
 		{"userinfo", get("http://u:p@" + origin + "/"), 400},
 		{"version", "GET http://" + origin + "/ HTTP/2.0\r\nHost: x\r\n\r\n", 505},
 		{"oversize head", "GET http://" + origin + "/ HTTP/1.1\r\nHost: x\r\nX: " + strings.Repeat("a", 70<<10) + "\r\n\r\n", 431},

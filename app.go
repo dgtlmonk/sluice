@@ -121,6 +121,10 @@ func (a *App) startup(ctx context.Context) {
 	if info := a.ca.info(); !info.Ready {
 		log.Printf("ca: %s", info.Error) // errors never carry key material
 	}
+	// With a CA, CONNECT tunnels are decrypted; without one they get 501.
+	if auth, err := a.ca.authority(); err == nil {
+		a.proxy.useLeafCerts(auth)
+	}
 
 	// Bound methods read runCtx/cancel under mu, so publish them under mu too.
 	a.mu.Lock()

@@ -2,6 +2,7 @@ package testorigin
 
 import (
 	"bufio"
+	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
@@ -237,5 +238,21 @@ func TestChatAcceptsChunkedAndContentLengthBodies(t *testing.T) {
 		if resp.StatusCode != 200 || string(got) != ChatReply || resp.Header.Get("Content-Type") != "application/json" {
 			t.Fatalf("chunked=%v: status %d body %q", te, resp.StatusCode, got)
 		}
+	}
+}
+
+func TestStartTLSVerifiesWithOwnRoots(t *testing.T) {
+	addr, roots, stop := StartTLS()
+	t.Cleanup(stop)
+	if !strings.HasPrefix(addr, "127.0.0.1:") {
+		t.Fatalf("not loopback: %s", addr)
+	}
+	c, err := tls.Dial("tcp", addr, &tls.Config{RootCAs: roots, ServerName: TLSServerName, NextProtos: []string{"h2", "http/1.1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	if p := c.ConnectionState().NegotiatedProtocol; p != "http/1.1" {
+		t.Fatalf("ALPN = %q", p)
 	}
 }

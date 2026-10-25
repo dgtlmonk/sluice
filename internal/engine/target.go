@@ -12,11 +12,15 @@ type proxyTarget struct {
 	authority string // as written in the URI ("example.com:8080"); becomes Host
 	addr      string // host:port to dial (port defaulted to 80)
 	path      string // origin-form: "/path?query"
+	// tls is set for requests from a decrypted tunnel: the upstream leg is
+	// TLS too, and serverName is the SNI and certificate name to check.
+	tls        bool
+	serverName string
 }
 
 var (
 	errNotAbsolute  = errors.New("proxy requests must use absolute-form (http://host/path)")
-	errHTTPSTarget  = errors.New("https:// targets need CONNECT (not supported yet)")
+	errHTTPSTarget  = errors.New("https:// targets must be sent through a CONNECT tunnel")
 	errBadScheme    = errors.New("only http:// targets are supported")
 	errBadAuthority = errors.New("invalid authority in request target")
 )

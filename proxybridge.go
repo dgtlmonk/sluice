@@ -77,10 +77,11 @@ type proxyBridge struct {
 	storeErr string       // why store is nil
 	writer   *storage.Writer
 	srv      *engine.Server
-	served   chan struct{} // closed when Serve returns
-	flushed  chan struct{} // closed when the feed flusher returns
-	writing  chan struct{} // closed when the storage writer returns
-	reported chan struct{} // closed when the storage error forwarder returns
+	leaf     engine.LeafMinter // nil: HTTPS interception off (no CA)
+	served   chan struct{}     // closed when Serve returns
+	flushed  chan struct{}     // closed when the feed flusher returns
+	writing  chan struct{}     // closed when the storage writer returns
+	reported chan struct{}     // closed when the storage error forwarder returns
 }
 
 func newProxyBridge(addr string, newID func() int64) *proxyBridge {
@@ -110,6 +111,14 @@ type unavailableStore struct{ reason string }
 
 func (u unavailableStore) InsertBatch(context.Context, []storage.Exchange) error {
 	return errors.New("no project store: " + u.reason)
+}
+
+// useLeafCerts turns on HTTPS interception with the loaded root CA. Call
+// before start.
+func (b *proxyBridge) useLeafCerts(m engine.LeafMinter) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.leaf = m
 }
 
 // proxyAddrFromEnv returns the configured listen address.
@@ -197,6 +206,7 @@ func (b *proxyBridge) start(ctx context.Context, emit func([]synth.Exchange), on
 		b.capture.Body(id, dir == engine.DirResponse, raw)
 	}
 	cfg.Done = b.complete
+	cfg.LeafCerts = b.leaf
 	b.srv = engine.NewServer(cfg)
 	b.served = make(chan struct{})
 	srv := b.srv
@@ -216,14 +226,18 @@ func (b *proxyBridge) start(ctx context.Context, emit func([]synth.Exchange), on
 // appends to the in-memory storage queue.
 func (b *proxyBridge) complete(ex engine.Exchange) {
 	req, resp := b.capture.Finish(ex.ID)
-	host, port := splitHostPort(ex.Host)
+	scheme := ex.Scheme
+	if scheme == "" {
+		scheme = "http" // a parse error before the scheme was known
+	}
+	host, port := splitHostPort(ex.Host, scheme)
 	llmReason := detectLLM(ex.Path, req, resp)
 	id := b.newID()
 	b.feed.Publish(synth.Exchange{
 		ID:         id,
 		StartedAt:  ex.Started.UnixMilli(),
 		Method:     ex.Method,
-		Scheme:     "http", // M1 proxies plain HTTP only
+		Scheme:     scheme,
 		Host:       host,
 		Port:       port,
 		Path:       ex.Path,
@@ -241,7 +255,7 @@ func (b *proxyBridge) complete(ex engine.Exchange) {
 		ID:        id,
 		StartedAt: ex.Started,
 		Duration:  ex.Duration,
-		Scheme:    "http",
+		Scheme:    scheme,
 		Host:      host,
 		Port:      port,
 		Method:    ex.Method,
@@ -389,15 +403,20 @@ func rowFromStored(ex storage.Exchange) synth.Exchange {
 	}
 }
 
-// splitHostPort splits an authority; a missing port means the http default.
-func splitHostPort(authority string) (string, int) {
+// splitHostPort splits an authority; a missing port means the scheme's
+// default (443 for https, 80 otherwise).
+func splitHostPort(authority, scheme string) (string, int) {
+	def := 80
+	if scheme == "https" {
+		def = 443
+	}
 	host, p, err := net.SplitHostPort(authority)
 	if err != nil {
-		return authority, 80
+		return strings.Trim(authority, "[]"), def
 	}
 	port, err := strconv.Atoi(p)
 	if err != nil {
-		return host, 80
+		return host, def
 	}
 	return host, port
 }

@@ -20,6 +20,9 @@ type clientConn struct {
 	br   *bufio.Reader
 	bw   *bufio.Writer
 	idle bool // guarded by srv.mu
+	// tunnel is set once a CONNECT has been decrypted; from then on conn,
+	// br and bw carry the plaintext inside TLS.
+	tunnel *tunnel
 }
 
 // serve loops over requests on one client connection (client-side
@@ -51,6 +54,7 @@ type exchange struct {
 	req      *Request
 	target   proxyTarget
 	clientKA bool // the client asked to keep its connection open
+	silent   bool // not published (a CONNECT that became a tunnel)
 }
 
 // handleOne proxies one request. It reports whether the client connection
@@ -62,7 +66,7 @@ func (cc *clientConn) handleOne() bool {
 		// A client that connected (or kept a conn alive) and then closed
 		// without sending a request made no exchange; publishing one would
 		// show an empty row. Parse errors set Err, so they are still shown.
-		if x.ex.Method == "" && x.ex.Err == "" {
+		if x.silent || (x.ex.Method == "" && x.ex.Err == "") {
 			return
 		}
 		x.ex.Duration = time.Since(x.ex.Started)
@@ -85,8 +89,15 @@ func (cc *clientConn) handleOne() bool {
 	}
 	x.req = req
 	x.ex.Method = req.Method
+	x.ex.Scheme = "http"
+	if cc.tunnel != nil {
+		x.ex.Scheme = "https"
+	}
 	s.tapHead(x.ex.ID, DirRequest, req.RawHead)
 
+	if req.Method == "CONNECT" {
+		return cc.handleConnect(x)
+	}
 	if status, reason := cc.checkRequest(x); status != 0 {
 		x.ex.Err = reason
 		cc.reject(x, status, reason)
@@ -101,10 +112,13 @@ func (cc *clientConn) handleOne() bool {
 // returns a non-zero status when the request must be refused.
 func (cc *clientConn) checkRequest(x *exchange) (int, string) {
 	req := x.req
-	if req.Method == "CONNECT" {
-		return 405, "CONNECT is not supported yet (HTTPS interception comes in M3)"
+	var t proxyTarget
+	var err error
+	if cc.tunnel != nil {
+		t, err = cc.tunnel.target(req.Target)
+	} else {
+		t, err = parseAbsoluteTarget(req.Target)
 	}
-	t, err := parseAbsoluteTarget(req.Target)
 	if err != nil {
 		return 400, err.Error()
 	}
@@ -141,7 +155,7 @@ func upstreamRequestHead(req *Request, t proxyTarget) (string, Headers) {
 func (cc *clientConn) roundTrip(x *exchange) bool {
 	s := cc.srv
 	req := x.req
-	key := poolKey(x.target.addr, false)
+	key := poolKey(x.target)
 	start, headers := upstreamRequestHead(req, x.target)
 	body := tapBody(req.Body, s.tapFor(x.ex.ID, DirRequest))
 
@@ -164,7 +178,7 @@ func (cc *clientConn) roundTrip(x *exchange) bool {
 	for attempt := 0; ; attempt++ {
 		if up == nil {
 			var err error
-			if up, err = s.dial(key, x.target.addr); err != nil {
+			if up, err = s.dial(key, x.target); err != nil {
 				return cc.upstreamFailed(x, err)
 			}
 		}
@@ -229,11 +243,16 @@ type requestBodyError struct{ err error }
 func (e *requestBodyError) Error() string { return "request body: " + e.err.Error() }
 func (e *requestBodyError) Unwrap() error { return e.err }
 
-func (s *Server) dial(key, addr string) (*upstreamConn, error) {
+func (s *Server) dial(key string, t proxyTarget) (*upstreamConn, error) {
 	d := net.Dialer{Timeout: s.cfg.DialTimeout}
-	c, err := d.Dial("tcp", addr)
+	c, err := d.Dial("tcp", t.addr)
 	if err != nil {
 		return nil, err
+	}
+	if t.tls {
+		if c, err = s.dialTLS(c, t.serverName); err != nil {
+			return nil, err
+		}
 	}
 	tc := &timeoutConn{Conn: c, readTimeout: s.cfg.UpstreamIdleTimeout, writeTimeout: s.cfg.UpstreamIdleTimeout}
 	return &upstreamConn{key: key, conn: tc, br: bufio.NewReader(tc), bw: bufio.NewWriter(tc)}, nil
@@ -455,7 +474,7 @@ func (cc *clientConn) reject(x *exchange, status int, msg string) {
 		{Name: "Connection", Value: "close"},
 	}
 	if status == 405 { // RFC 9110 §15.5.6: a 405 MUST list what is allowed
-		h = append(h, Header{Name: "Allow", Value: "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"})
+		h = append(h, Header{Name: "Allow", Value: "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, CONNECT"})
 	}
 	// Build the head in memory first so the history records exactly the
 	// bytes the client got, then send them.
@@ -479,6 +498,8 @@ func reasonPhrase(status int) string {
 		return "Bad Request"
 	case 405:
 		return "Method Not Allowed"
+	case 501:
+		return "Not Implemented"
 	case 431:
 		return "Request Header Fields Too Large"
 	case 502:

@@ -27,6 +27,7 @@ package testorigin
 
 import (
 	"bufio"
+	"crypto/x509"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -92,6 +93,24 @@ func Handler() http.Handler {
 func Start() (addr string, stop func()) {
 	srv := httptest.NewServer(Handler()) // httptest binds 127.0.0.1:0.
 	return srv.Listener.Addr().String(), srv.Close
+}
+
+// TLSServerName is a DNS name the StartTLS certificate is valid for. The
+// listener is still 127.0.0.1; tests dial that address and send this name as
+// SNI, so nothing is resolved through DNS.
+const TLSServerName = "example.com"
+
+// StartTLS serves Handler over HTTPS on 127.0.0.1:0. The certificate comes
+// from httptest: self-signed, so it is its own CA, valid for 127.0.0.1, ::1
+// and TLSServerName. roots trusts exactly that certificate, so a proxy under
+// test can verify the origin without touching the system trust store.
+// The server offers only http/1.1 via ALPN (httptest does not enable h2
+// unless asked).
+func StartTLS() (addr string, roots *x509.CertPool, stop func()) {
+	srv := httptest.NewTLSServer(Handler())
+	roots = x509.NewCertPool()
+	roots.AddCert(srv.Certificate())
+	return srv.Listener.Addr().String(), roots, srv.Close
 }
 
 func writeFixed(w http.ResponseWriter, body string) {
