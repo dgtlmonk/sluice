@@ -2,16 +2,20 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/dgtlmonk/sluice/internal/engine"
 	"github.com/dgtlmonk/sluice/internal/live"
 	"github.com/dgtlmonk/sluice/internal/platform"
 	"github.com/dgtlmonk/sluice/internal/storage"
@@ -33,6 +37,11 @@ const (
 	maxStreamRate     = 100_000
 	synthSeed         = 0x51_1CE
 	storeReadTimeout  = 10 * time.Second
+	// trustCacheTTL: how long a CA trust check result is reused by the
+	// engine's pinning detection, which may ask on every aborted handshake.
+	trustCacheTTL = time.Minute
+	// envBypassFile overrides where the bypass list is kept.
+	envBypassFile = "SLUICE_BYPASS_FILE" //nolint:gosec // G101: an env var name, not a credential
 )
 
 // App is the Wails binding surface. It is glue only: engine-side code lives in
@@ -45,6 +54,7 @@ type App struct {
 
 	proxy    *proxyBridge
 	ca       *caService
+	trust    *trustCache // CA trust result for the engine's pinning check
 	devSynth bool
 	store    *storage.Store // nil if the project could not be opened; set in startup
 	// historyMax is the largest stored id at startup. History serves rows up
@@ -97,6 +107,7 @@ func NewApp() *App {
 		feed:     live.NewFeed[synth.Exchange](liveQueueCapacity, liveMaxBatch),
 	}
 	a.ca = newCAService(platform.SystemCertTrust())
+	a.trust = &trustCache{check: a.ca.check, ttl: trustCacheTTL}
 	a.proxy = newProxyBridge(proxyAddrFromEnv(), func() int64 { return a.nextID.Add(1) })
 	return a
 }
@@ -125,6 +136,7 @@ func (a *App) startup(ctx context.Context) {
 	if auth, err := a.ca.authority(); err == nil {
 		a.proxy.useLeafCerts(auth)
 	}
+	a.proxy.useTLSPolicy(loadBypassList(), a.trust.trusted)
 
 	// Bound methods read runCtx/cancel under mu, so publish them under mu too.
 	a.mu.Lock()
@@ -367,4 +379,113 @@ func (a *App) ExportCA() (string, error) {
 		return "", err
 	}
 	return path, a.ca.export(path)
+}
+
+// BypassHosts returns the bypass list: host patterns tunnelled raw, never
+// decrypted.
+func (a *App) BypassHosts() []string { return a.proxy.bypassHosts() }
+
+// SetBypassHosts validates, applies (live) and saves the bypass list. It
+// returns the normalized list.
+func (a *App) SetBypassHosts(patterns []string) ([]string, error) {
+	norm, err := a.proxy.setBypass(patterns)
+	if err != nil {
+		return nil, err
+	}
+	if err := saveBypassList(norm); err != nil {
+		return norm, fmt.Errorf("applied, but not saved: %w", err)
+	}
+	return norm, nil
+}
+
+// TLSHosts lists hosts the engine tunnels raw on its own: suspected
+// certificate pinning, or origins that refuse HTTP/1.1. Not persisted.
+func (a *App) TLSHosts() []TLSHost { return a.proxy.learnedHosts() }
+
+// ForgetTLSHost clears a learned flag so the host is decrypted again.
+func (a *App) ForgetTLSHost(host string) { a.proxy.forgetHost(host) }
+
+// ExchangeTLS returns the TLS client facts (JA4, tunnel reason, pinning
+// flag) for a row of this session; zero for plain HTTP or older rows.
+func (a *App) ExchangeTLS(id int64) ExchangeTLS { return a.proxy.exchangeTLS(id) }
+
+// trustCache remembers the last CA trust check for ttl. The engine calls
+// trusted() when a client aborts the handshake; the check itself is an OS
+// call (internal/platform), too slow to repeat on every abort.
+type trustCache struct {
+	check func() (platform.TrustReport, error)
+	ttl   time.Duration
+
+	mu     sync.Mutex
+	at     time.Time
+	result bool
+}
+
+func (c *trustCache) trusted() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.at.IsZero() && time.Since(c.at) < c.ttl {
+		return c.result
+	}
+	r, err := c.check()
+	c.result = err == nil && r.Trusted // unknown counts as untrusted: no false pin flags
+	c.at = time.Now()
+	return c.result
+}
+
+// bypassFilePath is ~/Library/Application Support/Sluice/bypass.json on macOS.
+func bypassFilePath() (string, error) {
+	if p := strings.TrimSpace(os.Getenv(envBypassFile)); p != "" {
+		return filepath.Abs(p)
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "Sluice", "bypass.json"), nil
+}
+
+// loadBypassList reads the saved list. A missing or bad file is logged and
+// means an empty list: the proxy must start either way.
+func loadBypassList() []string {
+	path, err := bypassFilePath()
+	if err != nil {
+		log.Printf("bypass list: %v", err)
+		return nil
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // G304: our own settings file
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	var list []string
+	if err == nil {
+		err = json.Unmarshal(b, &list)
+	}
+	if err == nil {
+		list, err = engine.NormalizeBypass(list)
+	}
+	if err != nil {
+		log.Printf("bypass list %s ignored: %v", path, err)
+		return nil
+	}
+	return list
+}
+
+func saveBypassList(list []string) error {
+	path, err := bypassFilePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path) // atomic: never a half-written list
 }

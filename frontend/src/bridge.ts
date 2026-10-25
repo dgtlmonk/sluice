@@ -1,10 +1,24 @@
 // Thin wrapper over the Wails bindings: the only module that talks to Go.
-import { CAInfo, CATrust, ExportCA, History, InstallCA, ProxyStatus, SeedRows, StartStream, StopStream } from '../wailsjs/go/main/App'
+import {
+  BypassHosts,
+  CAInfo,
+  CATrust,
+  ExportCA,
+  ForgetTLSHost,
+  History,
+  InstallCA,
+  ProxyStatus,
+  SeedRows,
+  SetBypassHosts,
+  StartStream,
+  StopStream,
+  TLSHosts,
+} from '../wailsjs/go/main/App'
 import type { main, platform } from '../wailsjs/go/models'
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { enqueueExchanges, type Exchange, useExchangeStore } from './store/exchanges'
 
-export { ExchangeDetail, Stats } from '../wailsjs/go/main/App'
+export { ExchangeDetail, ExchangeTLS, Stats } from '../wailsjs/go/main/App'
 
 const EVENT_BATCH = 'exchanges:batch'
 const EVENT_PROXY_STATUS = 'proxy:status'
@@ -16,6 +30,8 @@ export type ExchangeView = main.ExchangeView
 export type MessageView = main.MessageView
 export type CAState = main.CAInfo
 export type TrustState = platform.TrustReport
+export type ExchangeTLSState = main.ExchangeTLS
+export type TLSHostState = main.TLSHost
 const SEED_CHUNK = 10_000 // must not exceed maxSeedChunk in app.go
 
 /** Subscribes the store to engine batches. Returns the unsubscribe function. */
@@ -77,3 +93,11 @@ export const caTrust = (): Promise<TrustState> => CATrust()
 export const installCA = (): Promise<void> => InstallCA()
 /** Returns the saved path, or '' if the user cancelled the dialog. */
 export const exportCA = (): Promise<string> => ExportCA()
+
+/** Host patterns tunnelled raw (never decrypted): "host" or "*.domain". */
+export const bypassHosts = (): Promise<string[]> => BypassHosts().then((l) => l ?? [])
+/** Validates, applies live and saves; resolves to the normalized list. */
+export const setBypassHosts = (patterns: string[]): Promise<string[]> => SetBypassHosts(patterns).then((l) => l ?? [])
+/** Hosts the engine tunnels on its own: pinning suspected, or http/1.1 refused. */
+export const tlsHosts = (): Promise<TLSHostState[]> => TLSHosts().then((l) => l ?? [])
+export const forgetTLSHost = (host: string): Promise<void> => ForgetTLSHost(host)

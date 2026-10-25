@@ -40,6 +40,12 @@ type Exchange struct {
 	RespBytes int64  // decoded response body bytes forwarded
 	Duration  time.Duration
 	Err       string // proxy-side failure, empty on success
+
+	// TLS facts for exchanges that came through a CONNECT. Requests inside
+	// a decrypted tunnel inherit them from the tunnel's ClientHello.
+	JA4          string // client TLS fingerprint (see ja4.go); "" for plain HTTP
+	Tunnel       string // non-empty: tunnelled raw, not decrypted; the Tunnel* reason
+	PinSuspected bool   // the client aborted our handshake while the CA is trusted
 }
 
 // Config tunes the proxy. Zero durations fall back to DefaultConfig values.
@@ -64,6 +70,16 @@ type Config struct {
 	// Nil means the system roots, which is what production wants; tests
 	// pass the test origin's own CA.
 	UpstreamRootCAs *x509.CertPool
+	// BypassHosts are host patterns tunnelled raw without decrypting (see
+	// NormalizeBypass). Invalid patterns make the list empty, so callers
+	// validate with NormalizeBypass first. SetBypassHosts changes it live.
+	BypassHosts []string
+	// CATrusted reports whether the OS currently trusts Sluice's root CA.
+	// It gates pinning detection: a client that aborts our handshake is
+	// only "likely pinned" if it should have trusted the leaf. The engine
+	// never asks the OS itself; nil means "unknown", and nothing is flagged.
+	// It is called only on such an abort, on the connection goroutine.
+	CATrusted func() bool
 
 	// Events, if set, receives one Exchange per request. Publishing never
 	// blocks: when the feed is full the event is dropped and counted.
@@ -173,6 +189,7 @@ type Server struct {
 	cfg    Config
 	pool   *connPool
 	certs  *certCache // nil when interception is off
+	policy *tlsPolicy
 	nextID atomic.Uint64
 
 	mu      sync.Mutex
@@ -189,11 +206,14 @@ func NewServer(cfg Config) *Server {
 	if cfg.LeafCerts != nil {
 		certs = newCertCache(cfg.LeafCerts)
 	}
+	policy := newTLSPolicy()
+	_ = policy.setBypass(cfg.BypassHosts) // documented: invalid -> empty
 	return &Server{
-		cfg:   cfg,
-		certs: certs,
-		pool:  newConnPool(cfg.MaxIdlePerHost, cfg.UpstreamIdleTimeout),
-		conns: map[*clientConn]struct{}{},
+		cfg:    cfg,
+		certs:  certs,
+		policy: policy,
+		pool:   newConnPool(cfg.MaxIdlePerHost, cfg.UpstreamIdleTimeout),
+		conns:  map[*clientConn]struct{}{},
 	}
 }
 

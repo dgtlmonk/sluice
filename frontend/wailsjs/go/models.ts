@@ -115,6 +115,22 @@ export namespace main {
 	        this.dir = source["dir"];
 	    }
 	}
+	export class ExchangeTLS {
+	    ja4?: string;
+	    tunnel?: string;
+	    pinSuspected?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExchangeTLS(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ja4 = source["ja4"];
+	        this.tunnel = source["tunnel"];
+	        this.pinSuspected = source["pinSuspected"];
+	    }
+	}
 	export class HeaderField {
 	    name: string;
 	    value: string;
@@ -233,6 +249,23 @@ export namespace main {
 	        this.listening = source["listening"];
 	        this.addr = source["addr"];
 	        this.error = source["error"];
+	    }
+	}
+	
+	export class TLSHost {
+	    host: string;
+	    reason: string;
+	    since: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TLSHost(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.reason = source["reason"];
+	        this.since = source["since"];
 	    }
 	}
 

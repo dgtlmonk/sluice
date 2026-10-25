@@ -6,9 +6,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 // LeafMinter signs a TLS server certificate for one host. *ca.Authority
@@ -31,6 +33,7 @@ type tunnel struct {
 	authority  string // Host value for the origin ("example.com", or "h:8443")
 	addr       string // host:port to dial (the CONNECT target)
 	serverName string // SNI sent upstream and the name the origin cert must match
+	ja4        string // the client's TLS fingerprint, copied onto every exchange
 }
 
 // parseConnectTarget parses a CONNECT request target. CONNECT uses
@@ -182,24 +185,58 @@ func (cc *clientConn) handleConnect(x *exchange) bool {
 		authority += ":" + port
 	}
 
-	_, _ = cc.bw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+	_, _ = cc.bw.WriteString(connectEstablished)
 	if err := cc.bw.Flush(); err != nil {
 		return false
 	}
 
-	pending, _ := cc.br.Peek(cc.br.Buffered())
-	raw := &prefixConn{Conn: cc.conn.Conn, pending: append([]byte(nil), pending...)}
+	// Read the client's ClientHello before answering it: whether to decrypt
+	// at all depends on what is in it. Same absolute cap as a request head,
+	// so a client that never finishes its hello cannot hold the goroutine.
+	cc.conn.beginHead(s.cfg.HeadReadTimeout)
+	helloRaw, hello, err := readClientHello(cc.br)
+	cc.conn.endHead()
+	if err != nil {
+		x.ex.Err = "ClientHello: " + err.Error()
+		return false
+	}
+	x.ex.JA4 = ja4(hello)
+	// SNI names the site; an IP-literal target has none, so the CONNECT host
+	// is the name both legs use.
+	name := strings.TrimSuffix(hello.ServerName, ".")
+	if name == "" {
+		name = host
+	}
+	if reason := s.policy.tunnelReason(hello, name, host); reason != "" {
+		return cc.rawTunnel(x, helloRaw, reason)
+	}
+	// Probe the origin now, offering only http/1.1, before the client is
+	// committed to our certificate: if the origin refuses HTTP/1.1, the
+	// only way to keep this client working is to step aside. A probe that
+	// succeeds is pooled for the first request; any other failure is left
+	// to the request path, which reports it as a 502 inside the tunnel.
+	probeTarget := proxyTarget{addr: x.ex.Host, tls: true, serverName: name}
+	up, err := s.dial(poolKey(probeTarget), probeTarget)
+	switch {
+	case errors.Is(err, errHTTP11Refused):
+		s.policy.learn(name, TunnelHostH2)
+		return cc.rawTunnel(x, helloRaw, TunnelHostH2)
+	case err == nil:
+		s.pool.put(up)
+	}
+
+	// Replay the hello (and anything the client already sent behind it) to
+	// crypto/tls, which never knows it was read once already.
+	rest, _ := cc.br.Peek(cc.br.Buffered())
+	raw := &prefixConn{Conn: cc.conn.Conn, pending: append(helloRaw, rest...)}
+	certSent := false
 	tc := tls.Server(raw, &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		NextProtos: alpnHTTP11,
-		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			// No SNI happens for IP-literal targets (clients never send an
-			// IP in SNI); the CONNECT host is the name the client expects.
-			name := hello.ServerName
-			if name == "" {
-				name = host
-			}
-			return s.certs.get(name)
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			cert, err := s.certs.get(name)
+			certSent = err == nil
+			return cert, err
 		},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.HeadReadTimeout)
@@ -210,6 +247,14 @@ func (cc *clientConn) handleConnect(x *exchange) bool {
 		// something that is not TLS. Nothing can be answered on a half-done
 		// handshake; record why and close.
 		x.ex.Err = "client TLS handshake: " + err.Error()
+		if certSent && clientAborted(err) && s.cfg.CATrusted != nil && s.cfg.CATrusted() {
+			// The client saw a leaf it should trust and still hung up: it
+			// most likely pins the real certificate (or its key). Future
+			// CONNECTs to this host are tunnelled raw so the app keeps
+			// working; the flag shows the user why.
+			x.ex.PinSuspected = true
+			s.policy.learn(name, TunnelPinned)
+		}
 		_ = tc.Close()
 		return false
 	}
@@ -224,7 +269,7 @@ func (cc *clientConn) handleConnect(x *exchange) bool {
 	s.mu.Unlock()
 	cc.br = bufio.NewReader(tconn)
 	cc.bw = bufio.NewWriter(tconn)
-	cc.tunnel = &tunnel{authority: authority, addr: x.ex.Host, serverName: strings.TrimSuffix(serverName, ".")}
+	cc.tunnel = &tunnel{authority: authority, addr: x.ex.Host, serverName: strings.TrimSuffix(serverName, "."), ja4: x.ex.JA4}
 	// The CONNECT itself is plumbing, not an exchange worth a history row;
 	// the requests inside the tunnel are. Failed CONNECTs (above) are kept.
 	x.silent = true
@@ -256,13 +301,97 @@ func (s *Server) dialTLS(c net.Conn, serverName string) (net.Conn, error) {
 	defer cancel()
 	if err := tc.HandshakeContext(ctx); err != nil {
 		_ = c.Close()
+		if isRemoteAlert(err, "no application protocol") {
+			// Alert 120 (RFC 7301 §3.2): none of our protocols, i.e. not
+			// http/1.1, is acceptable to this origin.
+			return nil, fmt.Errorf("origin TLS handshake: %w: %w", errHTTP11Refused, err)
+		}
 		return nil, fmt.Errorf("origin TLS handshake: %w", err)
 	}
 	// An origin that ignores ALPN negotiates nothing, which means HTTP/1.1.
 	// crypto/tls already refuses a protocol that was not offered.
 	if p := tc.ConnectionState().NegotiatedProtocol; p != "" && p != "http/1.1" {
 		_ = tc.Close()
-		return nil, fmt.Errorf("origin negotiated %q", p)
+		return nil, fmt.Errorf("%w: origin negotiated %q", errHTTP11Refused, p)
 	}
 	return tc, nil
+}
+
+// errHTTP11Refused marks an origin that will not speak HTTP/1.1 over TLS.
+var errHTTP11Refused = errors.New("origin refuses http/1.1")
+
+// isRemoteAlert reports whether err is a TLS alert the peer sent us with
+// the given description. crypto/tls returns a received alert as a
+// *net.OpError with Op "remote error" whose Err is an unexported alert type,
+// so the description text (from RFC 8446 §6) is the only handle on it.
+func isRemoteAlert(err error, desc string) bool {
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "remote error" && op.Err != nil && op.Err.Error() == "tls: "+desc
+}
+
+// clientAborted reports whether a failed server handshake ended because the
+// client gave up: it sent an alert (bad_certificate, unknown_ca, ...) or
+// just closed the connection. Timeouts and garbage are not aborts.
+func clientAborted(err error) bool {
+	var op *net.OpError
+	if errors.As(err, &op) && op.Op == "remote error" {
+		return true
+	}
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET)
+}
+
+// rawTunnel stops being an HTTP proxy for this connection and becomes a
+// byte pipe: the client's TLS session goes to the origin untouched, so
+// Sluice sees only the ClientHello (hence the JA4) and byte counts. hello
+// is the ClientHello that was already read; it is sent first.
+// ReqBytes/RespBytes count tunnelled bytes in each direction. It always
+// reports false: the connection is finished when the tunnel closes.
+func (cc *clientConn) rawTunnel(x *exchange, hello []byte, reason string) bool {
+	s := cc.srv
+	x.ex.Tunnel = reason
+	x.ex.Scheme = "https" // TLS end to end, just not decrypted by Sluice
+	d := net.Dialer{Timeout: s.cfg.DialTimeout}
+	oc, err := d.Dial("tcp", x.ex.Host)
+	if err != nil {
+		// The 200 is already sent, so the only answer left is a close.
+		x.ex.Err = "tunnel dial: " + err.Error()
+		return false
+	}
+	origin := &timeoutConn{Conn: oc, readTimeout: s.cfg.UpstreamIdleTimeout, writeTimeout: s.cfg.UpstreamIdleTimeout}
+	defer func() { _ = origin.Close() }()
+	x.ex.Status = 200
+	s.tapHead(x.ex.ID, DirResponse, []byte(connectEstablished))
+
+	up := make(chan int64, 1)
+	go func() {
+		n, err := origin.Write(hello)
+		if err == nil {
+			var m int64
+			m, err = io.Copy(origin, cc.br) // cc.br holds anything sent behind the hello
+			n += int(m)
+		}
+		if err != nil {
+			_ = cc.conn.Close() // unblock the other direction
+		}
+		closeWrite(origin.Conn) // pass the client's FIN on
+		up <- int64(n)
+	}()
+	down, err := io.Copy(cc.conn, origin)
+	if err != nil {
+		_ = origin.Close()
+	}
+	closeWrite(cc.conn.Conn)
+	x.ex.ReqBytes, x.ex.RespBytes = <-up, down
+	return false
+}
+
+// connectEstablished is the answer to every accepted CONNECT.
+const connectEstablished = "HTTP/1.1 200 Connection Established\r\n\r\n"
+
+// closeWrite half-closes a TCP connection (sends FIN, keeps reading), so
+// each direction of a tunnel can end on its own like a real TCP pipe.
+func closeWrite(c net.Conn) {
+	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
+	}
 }

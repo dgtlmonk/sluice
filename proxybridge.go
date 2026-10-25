@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,6 +79,9 @@ type proxyBridge struct {
 	writer   *storage.Writer
 	srv      *engine.Server
 	leaf     engine.LeafMinter // nil: HTTPS interception off (no CA)
+	bypass   []string          // normalized bypass patterns; applied at start and live
+	trusted  func() bool       // CA trust result for pinning detection; nil: unknown
+	tlsMeta  tlsMetaIndex      // JA4 / tunnel facts per row id (not in the store yet)
 	served   chan struct{}     // closed when Serve returns
 	flushed  chan struct{}     // closed when the feed flusher returns
 	writing  chan struct{}     // closed when the storage writer returns
@@ -207,6 +211,8 @@ func (b *proxyBridge) start(ctx context.Context, emit func([]synth.Exchange), on
 	}
 	cfg.Done = b.complete
 	cfg.LeafCerts = b.leaf
+	cfg.BypassHosts = b.bypass
+	cfg.CATrusted = b.trusted
 	b.srv = engine.NewServer(cfg)
 	b.served = make(chan struct{})
 	srv := b.srv
@@ -233,6 +239,11 @@ func (b *proxyBridge) complete(ex engine.Exchange) {
 	host, port := splitHostPort(ex.Host, scheme)
 	llmReason := detectLLM(ex.Path, req, resp)
 	id := b.newID()
+	if ex.JA4 != "" || ex.Tunnel != "" || ex.PinSuspected {
+		b.mu.Lock()
+		b.tlsMeta.put(id, ExchangeTLS{JA4: ex.JA4, Tunnel: ex.Tunnel, PinSuspected: ex.PinSuspected})
+		b.mu.Unlock()
+	}
 	b.feed.Publish(synth.Exchange{
 		ID:         id,
 		StartedAt:  ex.Started.UnixMilli(),
@@ -419,4 +430,103 @@ func splitHostPort(authority, scheme string) (string, int) {
 		return host, def
 	}
 	return host, port
+}
+
+// ExchangeTLS is what the detail pane shows about a row's TLS client.
+type ExchangeTLS struct {
+	JA4          string `json:"ja4,omitempty"`
+	Tunnel       string `json:"tunnel,omitempty"` // why it was tunnelled raw; "" when decrypted
+	PinSuspected bool   `json:"pinSuspected,omitempty"`
+}
+
+// TLSHost is a host the engine tunnels raw on its own (Settings list).
+type TLSHost struct {
+	Host   string `json:"host"`
+	Reason string `json:"reason"`
+	Since  string `json:"since"` // RFC 3339
+}
+
+// maxTLSMeta bounds tlsMetaIndex. The store has no column for these facts
+// yet (schema v1), so they live in memory for this session's newest rows.
+const maxTLSMeta = 100_000
+
+// tlsMetaIndex maps row ids to TLS facts, forgetting the oldest past
+// maxTLSMeta. Guarded by proxyBridge.mu.
+type tlsMetaIndex struct {
+	byID  map[int64]ExchangeTLS
+	order []int64 // insertion order, for eviction
+}
+
+func (m *tlsMetaIndex) put(id int64, v ExchangeTLS) {
+	if m.byID == nil {
+		m.byID = map[int64]ExchangeTLS{}
+	}
+	if len(m.order) >= maxTLSMeta {
+		delete(m.byID, m.order[0])
+		m.order = m.order[1:]
+	}
+	m.byID[id] = v
+	m.order = append(m.order, id)
+}
+
+// useTLSPolicy sets the initial bypass list (already normalized) and the CA
+// trust callback. Call before start.
+func (b *proxyBridge) useTLSPolicy(bypass []string, trusted func() bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.bypass, b.trusted = bypass, trusted
+}
+
+// setBypass validates and applies a new bypass list, live if the proxy runs.
+// It returns the normalized list.
+func (b *proxyBridge) setBypass(patterns []string) ([]string, error) {
+	norm, err := engine.NormalizeBypass(patterns)
+	if err != nil {
+		return nil, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.srv != nil {
+		if err := b.srv.SetBypassHosts(norm); err != nil {
+			return nil, err
+		}
+	}
+	b.bypass = norm
+	return slices.Clone(norm), nil
+}
+
+func (b *proxyBridge) bypassHosts() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.bypass)
+}
+
+func (b *proxyBridge) learnedHosts() []TLSHost {
+	b.mu.Lock()
+	srv := b.srv
+	b.mu.Unlock()
+	if srv == nil {
+		return []TLSHost{}
+	}
+	flags := srv.LearnedHosts()
+	out := make([]TLSHost, len(flags))
+	for i, f := range flags {
+		out[i] = TLSHost{Host: f.Host, Reason: f.Reason, Since: f.Since.Format(time.RFC3339)}
+	}
+	return out
+}
+
+func (b *proxyBridge) forgetHost(host string) {
+	b.mu.Lock()
+	srv := b.srv
+	b.mu.Unlock()
+	if srv != nil {
+		srv.ForgetHost(host)
+	}
+}
+
+func (b *proxyBridge) exchangeTLS(id int64) ExchangeTLS {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.tlsMeta.byID[id]
 }

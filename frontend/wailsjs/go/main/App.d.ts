@@ -4,13 +4,19 @@ import {main} from '../models';
 import {platform} from '../models';
 import {synth} from '../models';
 
+export function BypassHosts():Promise<Array<string>>;
+
 export function CAInfo():Promise<main.CAInfo>;
 
 export function CATrust():Promise<platform.TrustReport>;
 
 export function ExchangeDetail(arg1:number):Promise<main.ExchangeView>;
 
+export function ExchangeTLS(arg1:number):Promise<main.ExchangeTLS>;
+
 export function ExportCA():Promise<string>;
+
+export function ForgetTLSHost(arg1:string):Promise<void>;
 
 export function History(arg1:number):Promise<Array<synth.Exchange>>;
 
@@ -20,8 +26,12 @@ export function ProxyStatus():Promise<main.ProxyStatus>;
 
 export function SeedRows(arg1:number):Promise<Array<synth.Exchange>>;
 
+export function SetBypassHosts(arg1:Array<string>):Promise<Array<string>>;
+
 export function StartStream(arg1:number):Promise<void>;
 
 export function Stats():Promise<main.AppStats>;
 
 export function StopStream():Promise<void>;
+
+export function TLSHosts():Promise<Array<main.TLSHost>>;

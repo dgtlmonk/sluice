@@ -613,3 +613,56 @@ button.toggle.llm.on {
 .error-text {
   color: var(--danger);
 }
+
+/* TLS facts strip in the detail pane (JA4, tunnel reason, pinning flag). */
+.detail-tls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  user-select: text;
+}
+
+.detail-tls code {
+  color: var(--text);
+}
+
+.badge {
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+}
+
+.badge-tunnel {
+  color: var(--accent);
+}
+
+.badge-pin {
+  color: var(--warn);
+}
+
+.bypass-editor {
+  width: 100%;
+  min-height: 80px;
+  box-sizing: border-box;
+  font-family: var(--font-mono);
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.tls-hosts {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0;
+}
+
+.tls-hosts li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 2px 0;
+}

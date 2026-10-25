@@ -92,6 +92,7 @@ func (cc *clientConn) handleOne() bool {
 	x.ex.Scheme = "http"
 	if cc.tunnel != nil {
 		x.ex.Scheme = "https"
+		x.ex.JA4 = cc.tunnel.ja4
 	}
 	s.tapHead(x.ex.ID, DirRequest, req.RawHead)
 

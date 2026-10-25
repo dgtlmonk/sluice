@@ -39,7 +39,8 @@ browser ==TLS (Sluice leaf)==> Sluice ==TLS (real cert, verified)==> example.com
 - **Inside the tunnel** the same hand-written HTTP/1.1 loop runs over the decrypted stream. Requests must be origin-form (`/path`); they all go to the CONNECT target, and the exchange is stored with scheme `https`. The CONNECT itself is not a history row unless it failed.
 - **Origin leg**: a TLS client offering only `http/1.1`, SNI = the client's SNI, certificate verified against the **system roots** (tests inject the test origin's own CA). A bad certificate becomes a `502` inside the tunnel, never a silent accept.
 - **Pooling**: upstream connections are keyed by address, TLS and server name, so a TLS connection checked for one name is never reused for another, and never for plain HTTP.
-- **Not yet**: bypass list, raw tunnelling for h2-only clients or hosts, pinning detection, and a scope check on CONNECT targets (there is no scope list in the engine yet).
+- **Before decrypting**, the ClientHello is read first and may send the connection down a raw tunnel instead (bypass list, h2-only clients or hosts, suspected pinning): see page 11. Its JA4 fingerprint is recorded either way: see page 12.
+- **Not yet**: a scope check on CONNECT targets (there is no scope list in the engine yet).
 
 ## Further reading
 

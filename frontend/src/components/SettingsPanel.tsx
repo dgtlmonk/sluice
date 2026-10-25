@@ -1,9 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
-import { type CAState, caInfo, caTrust, exportCA, installCA, type TrustState } from '../bridge'
+import {
+  bypassHosts,
+  type CAState,
+  caInfo,
+  caTrust,
+  exportCA,
+  forgetTLSHost,
+  installCA,
+  setBypassHosts,
+  type TLSHostState,
+  tlsHosts,
+  type TrustState,
+} from '../bridge'
 
 type Props = { onClose: () => void }
 
-/** Settings: for now the root CA section (export, install, trust check). */
+/** Settings: the root CA (export, install, trust check) and the TLS bypass list. */
 export function SettingsPanel({ onClose }: Props) {
   const [info, setInfo] = useState<CAState | null>(null)
   const [trust, setTrust] = useState<TrustState | null>(null)
@@ -113,6 +125,8 @@ export function SettingsPanel({ onClose }: Props) {
         {message && <p className="ok-text">{message}</p>}
         {error && <p className="error-text">{error}</p>}
         <p className="muted small">Firefox uses its own certificate store: import the exported PEM there, or set security.enterprise_roots.enabled to true.</p>
+
+        <BypassSection />
       </section>
     </div>
   )
@@ -125,5 +139,97 @@ function TrustBadge({ trust }: { trust: TrustState | null }) {
     <span className="warn-text" title={trust.detail}>
       {trust.installed ? 'Installed, but not trusted' : 'Not installed'}
     </span>
+  )
+}
+
+/**
+ * Bypass list editor (one pattern per line) plus the hosts the engine
+ * decided to tunnel on its own. Tunnelled hosts are never decrypted: only
+ * their JA4 fingerprint and byte counts are recorded.
+ */
+function BypassSection() {
+  const [text, setText] = useState('')
+  const [saved, setSaved] = useState('')
+  const [hosts, setHosts] = useState<TLSHostState[]>([])
+  const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  const refreshHosts = useCallback(() => {
+    tlsHosts()
+      .then(setHosts)
+      .catch((err) => setStatus({ ok: false, msg: String(err) }))
+  }, [])
+
+  useEffect(() => {
+    bypassHosts()
+      .then((l) => {
+        setText(l.join('\n'))
+        setSaved(l.join('\n'))
+      })
+      .catch((err) => setStatus({ ok: false, msg: String(err) }))
+    refreshHosts()
+  }, [refreshHosts])
+
+  const save = async (lines: string[]) => {
+    setStatus(null)
+    try {
+      const norm = await setBypassHosts(lines)
+      setText(norm.join('\n'))
+      setSaved(norm.join('\n'))
+      setStatus({ ok: true, msg: `Saved ${norm.length} pattern${norm.length === 1 ? '' : 's'}.` })
+    } catch (err) {
+      setStatus({ ok: false, msg: String(err) })
+    }
+  }
+
+  const onSave = () => save(text.split('\n'))
+  // Learned flags last only for this session; the bypass list is saved.
+  const onKeep = (host: string) => save([...saved.split('\n'), host])
+
+  const onForget = async (host: string) => {
+    await forgetTLSHost(host)
+    refreshHosts()
+  }
+
+  return (
+    <>
+      <h3>TLS bypass</h3>
+      <p className="muted">
+        Hosts listed here are tunnelled raw: Sluice passes the encrypted bytes through without decrypting them. One per line, <code>host</code> or <code>*.domain</code> (subdomains only).
+      </p>
+      <textarea
+        className="bypass-editor"
+        aria-label="Bypass hosts"
+        spellCheck={false}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={'example.com\n*.apple.com'}
+      />
+      <div className="actions">
+        <button className="primary" disabled={text === saved} onClick={() => void onSave()}>
+          Save bypass list
+        </button>
+      </div>
+      {status && <p className={status.ok ? 'ok-text' : 'error-text'}>{status.msg}</p>}
+
+      <h3>Tunnelled automatically</h3>
+      {hosts.length === 0 ? (
+        <p className="muted small">None this session. Hosts appear here when a client rejects Sluice&apos;s certificate while the CA is trusted (likely pinning), or an origin refuses HTTP/1.1.</p>
+      ) : (
+        <ul className="tls-hosts">
+          {hosts.map((h) => (
+            <li key={h.host}>
+              <span className="mono">{h.host}</span>
+              <span className={h.reason === 'pinning suspected' ? 'warn-text' : 'muted'}>{h.reason}</span>
+              <button onClick={() => void onKeep(h.host)} title="Keep tunnelling this host after restart">
+                Add to bypass list
+              </button>
+              <button onClick={() => void onForget(h.host)} title="Decrypt this host again on the next connection">
+                Forget
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   )
 }

@@ -14,3 +14,5 @@ Sluice is a learning build. Each core feature gets one short page: the idea, why
 | 08 | [Spotting LLM traffic: what it looks like, and why a proxy flags it](08-llm-traffic.md) | M2 |
 | 09 | [The local root CA: why HTTPS interception needs one](09-local-root-ca.md) | M3 |
 | 10 | [TLS interception: CONNECT, the handshake, SNI and ALPN](10-tls-mitm.md) | M3 |
+| 11 | [Not decrypting: the bypass list, h2-only tunnels and pinning](11-bypass-and-pinning.md) | M3 |
+| 12 | [JA4: fingerprinting the TLS client, from the defender's side](12-ja4-fingerprint.md) | M3 |

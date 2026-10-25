@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { ExchangeDetail, type ExchangeView, type MessageView } from '../bridge'
+import { ExchangeDetail, ExchangeTLS, type ExchangeTLSState, type ExchangeView, type MessageView } from '../bridge'
 import { useExchangeStore } from '../store/exchanges'
 
 type Tab = 'raw' | 'headers'
-type Loaded = { view: ExchangeView } | { error: string }
+type Loaded = { view: ExchangeView; tls: ExchangeTLSState } | { error: string }
 
 /**
  * Request/response for the selected exchange, fetched from the engine on demand.
@@ -22,8 +22,8 @@ export function DetailPane() {
     setLoaded(null)
     if (!selected) return
     let stale = false
-    ExchangeDetail(selected.id)
-      .then((view) => !stale && setLoaded({ view }))
+    Promise.all([ExchangeDetail(selected.id), ExchangeTLS(selected.id)])
+      .then(([view, tls]) => !stale && setLoaded({ view, tls }))
       .catch((err) => !stale && setLoaded({ error: String(err) }))
     return () => {
       stale = true
@@ -35,6 +35,7 @@ export function DetailPane() {
   }
 
   const view = loaded && 'view' in loaded ? loaded.view : null
+  const tls = loaded && 'tls' in loaded ? loaded.tls : null
   return (
     <section className="detail detail-tabbed">
       <nav className="detail-tabs" role="tablist">
@@ -46,6 +47,7 @@ export function DetailPane() {
         {loaded && 'error' in loaded && <span className="detail-error">error: {loaded.error}</span>}
         {view?.proxyError && <span className="detail-error">proxy error: {view.proxyError}</span>}
       </nav>
+      {tls && <TLSStrip tls={tls} />}
       <div className="detail-cols">
         <div className="detail-col">
           <header>
@@ -122,6 +124,25 @@ function HeaderTable({ m }: { m: MessageView }) {
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+/**
+ * TLS client facts for HTTPS rows: the JA4 fingerprint of the ClientHello,
+ * and whether the tunnel was passed through raw (and why).
+ */
+function TLSStrip({ tls }: { tls: ExchangeTLSState }) {
+  if (!tls.ja4 && !tls.tunnel && !tls.pinSuspected) return null
+  return (
+    <div className="detail-tls">
+      {tls.ja4 && (
+        <span title="JA4 TLS client fingerprint (FoxIO). Compare it with the User-Agent: a mismatch means the client is not what it claims.">
+          JA4 <code className="mono">{tls.ja4}</code>
+        </span>
+      )}
+      {tls.tunnel && <span className="badge badge-tunnel">tunnelled raw: {tls.tunnel}</span>}
+      {tls.pinSuspected && <span className="badge badge-pin">pinning suspected: the client rejected Sluice&apos;s certificate although the CA is trusted</span>}
     </div>
   )
 }
