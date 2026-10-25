@@ -38,6 +38,10 @@ export function InstallCA() {
   return window['go']['main']['App']['InstallCA']();
 }
 
+export function Prefs() {
+  return window['go']['main']['App']['Prefs']();
+}
+
 export function ProxyStatus() {
   return window['go']['main']['App']['ProxyStatus']();
 }
@@ -48,6 +52,10 @@ export function SeedRows(arg1) {
 
 export function SetBypassHosts(arg1) {
   return window['go']['main']['App']['SetBypassHosts'](arg1);
+}
+
+export function SetPrefs(arg1) {
+  return window['go']['main']['App']['SetPrefs'](arg1);
 }
 
 export function StartStream(arg1) {

@@ -235,6 +235,20 @@ export namespace main {
 	}
 	
 	
+	export class Prefs {
+	    theme: string;
+	    fontSize: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Prefs(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.theme = source["theme"];
+	        this.fontSize = source["fontSize"];
+	    }
+	}
 	export class ProxyStatus {
 	    listening: boolean;
 	    addr?: string;

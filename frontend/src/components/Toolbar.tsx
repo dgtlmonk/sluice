@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { seedRows, startStream, Stats, stopStream } from '../bridge'
+import { onMenuSettings, seedRows, startStream, Stats, stopStream } from '../bridge'
 import { useExchangeStore } from '../store/exchanges'
 import { followsArrival } from '../view/sort'
 import { SettingsPanel } from './SettingsPanel'
@@ -20,6 +20,7 @@ export function Toolbar() {
   // Synthetic Seed/Stream controls exist only behind the engine's dev toggle.
   const [devSynth, setDevSynth] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  useEffect(() => onMenuSettings(() => setSettingsOpen(true)), [])
 
   // The engine outlives the webview (a reload keeps the stream running), so take
   // the stream state from it instead of assuming a fresh start.

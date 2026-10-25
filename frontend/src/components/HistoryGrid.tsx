@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef } from 'react'
 import { columnSizingFeature, createColumnHelper, tableFeatures, useTable } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useExchangeStore, type Exchange } from '../store/exchanges'
+import { rowHeightFor, usePrefsStore } from '../store/prefs'
 import { indexInView, positionAt } from '../view/rowView'
 import { followsArrival, type SortColumn } from '../view/sort'
 
-const ROW_HEIGHT = 22
 const OVERSCAN = 20
 
 const features = tableFeatures({ columnSizingFeature })
@@ -62,13 +62,17 @@ export function HistoryGrid() {
   // Following the tail only means something when new rows land at the bottom.
   const following = autoScroll && followsArrival(sort)
 
+  // Rows are fixed-height (virtualized, never measured), so the height must
+  // follow the font size; re-measure whenever it changes.
+  const rowHeight = usePrefsStore((s) => rowHeightFor(s.prefs.fontSize))
   const scrollRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
     count: viewCount,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: OVERSCAN,
   })
+  useEffect(() => virtualizer.measure(), [virtualizer, rowHeight])
 
   const items = virtualizer.getVirtualItems()
   const first = items.length > 0 ? items[0].index : 0
@@ -150,7 +154,7 @@ export function HistoryGrid() {
                 key={row.id}
                 role="row"
                 className={'grid-row' + (pos === selectedPos ? ' selected' : '') + (item.index % 2 ? ' odd' : '')}
-                style={{ transform: `translateY(${item.start}px)`, height: ROW_HEIGHT }}
+                style={{ transform: `translateY(${item.start}px)`, height: rowHeight }}
                 onMouseDown={() => select(pos)}
               >
                 {row.getAllCells().map((cell) => (

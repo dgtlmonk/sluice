@@ -22,11 +22,15 @@ export function History(arg1:number):Promise<Array<synth.Exchange>>;
 
 export function InstallCA():Promise<void>;
 
+export function Prefs():Promise<main.Prefs>;
+
 export function ProxyStatus():Promise<main.ProxyStatus>;
 
 export function SeedRows(arg1:number):Promise<Array<synth.Exchange>>;
 
 export function SetBypassHosts(arg1:Array<string>):Promise<Array<string>>;
+
+export function SetPrefs(arg1:main.Prefs):Promise<main.Prefs>;
 
 export function StartStream(arg1:number):Promise<void>;
 

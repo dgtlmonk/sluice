@@ -54,6 +54,8 @@ type App struct {
 
 	proxy    *proxyBridge
 	ca       *caService
+	prefs    *prefsStore // appearance; shared by bindings and the native menu
+	menu     appMenu
 	trust    *trustCache // CA trust result for the engine's pinning check
 	devSynth bool
 	store    *storage.Store // nil if the project could not be opened; set in startup
@@ -106,6 +108,7 @@ func NewApp() *App {
 		gen:      synth.New(synthSeed),
 		feed:     live.NewFeed[synth.Exchange](liveQueueCapacity, liveMaxBatch),
 	}
+	a.prefs = loadPrefsStore()
 	a.ca = newCAService(platform.SystemCertTrust())
 	a.trust = &trustCache{check: a.ca.check, ttl: trustCacheTTL}
 	a.proxy = newProxyBridge(proxyAddrFromEnv(), func() int64 { return a.nextID.Add(1) })

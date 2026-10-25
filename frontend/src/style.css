@@ -18,7 +18,34 @@
 
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  --font-size: 12px;
+  --font-size: 12px; /* base size; the UI sets it from prefs (View > Bigger/Smaller Text) */
+}
+
+/*
+ * Light palette. The UI sets data-theme on <html> to the effective theme
+ * ("system" already resolved via prefers-color-scheme), so one block serves
+ * both Light and System-while-macOS-is-light. Text tokens meet WCAG AA
+ * (4.5:1) on --bg, --bg-raised, --bg-row-odd and --bg-hover.
+ * Keep --bg in sync with startupBackground in main.go and setWindowBackground
+ * in bridge.ts.
+ */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-raised: #f3f4f6;
+  --bg-row-odd: #f7f8fa;
+  --bg-hover: #e9ecf0;
+  --bg-selected: #d3e5ff;
+  --border: #c9ced6;
+  --text: #1f2328;
+  --text-muted: #59616b;
+  --accent: #0861c5;
+  --accent-strong: #0757b8;
+  --danger: #c4212c;
+  --warn: #8a5a00;
+  --ok: #18733a;
+  --redirect: #0550ae;
+  --llm: #7340cf;
 }
 
 *,
@@ -113,7 +140,7 @@ button.danger {
 
 .sep {
   width: 1px;
-  height: 18px;
+  height: calc(var(--font-size) * 1.5);
   background: var(--border);
   margin: 0 4px;
 }
@@ -180,7 +207,7 @@ button.danger {
   border: none;
   background: transparent;
   color: var(--text-muted);
-  line-height: 18px;
+  line-height: calc(var(--font-size) * 1.5);
 }
 
 .filter-clear:hover:not(:disabled) {
@@ -190,8 +217,8 @@ button.danger {
 
 .filter-help {
   position: relative;
-  width: 20px;
-  height: 20px;
+  width: calc(var(--font-size) * 1.6667);
+  height: calc(var(--font-size) * 1.6667);
   display: grid;
   place-items: center;
   border: 1px solid var(--border);
@@ -259,8 +286,8 @@ button.toggle.llm.on {
 }
 
 .grid-header .cell {
-  height: 24px;
-  line-height: 24px;
+  height: calc(var(--font-size) * 2);
+  line-height: calc(var(--font-size) * 2);
   border-right: 1px solid var(--border);
 }
 
@@ -275,7 +302,7 @@ button.toggle.llm.on {
 
 .sort-arrow {
   margin-left: 4px;
-  font-size: 9px;
+  font-size: calc(var(--font-size) * 0.75);
   color: var(--accent);
 }
 
@@ -553,12 +580,12 @@ button.toggle.llm.on {
 }
 
 .modal h2 {
-  font-size: 15px;
+  font-size: calc(var(--font-size) * 1.25);
   margin: 0;
 }
 
 .modal h3 {
-  font-size: 13px;
+  font-size: calc(var(--font-size) * 1.0833);
   margin: 16px 0 6px;
 }
 
@@ -599,7 +626,7 @@ button.toggle.llm.on {
 }
 
 .small {
-  font-size: 11px;
+  font-size: calc(var(--font-size) * 0.9167);
 }
 
 .ok-text {
@@ -665,4 +692,12 @@ button.toggle.llm.on {
   gap: 10px;
   align-items: center;
   padding: 2px 0;
+}
+
+.appearance {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 8px 0;
 }

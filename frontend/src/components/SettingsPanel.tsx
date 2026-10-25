@@ -7,15 +7,17 @@ import {
   exportCA,
   forgetTLSHost,
   installCA,
+  savePrefs,
   setBypassHosts,
   type TLSHostState,
   tlsHosts,
   type TrustState,
 } from '../bridge'
+import { FONT_SIZES, type Theme, usePrefsStore } from '../store/prefs'
 
 type Props = { onClose: () => void }
 
-/** Settings: the root CA (export, install, trust check) and the TLS bypass list. */
+/** Settings: appearance, the root CA (export, install, trust check) and the TLS bypass list. */
 export function SettingsPanel({ onClose }: Props) {
   const [info, setInfo] = useState<CAState | null>(null)
   const [trust, setTrust] = useState<TrustState | null>(null)
@@ -83,6 +85,8 @@ export function SettingsPanel({ onClose }: Props) {
             Close
           </button>
         </header>
+
+        <AppearanceSection />
 
         <h3>Root CA</h3>
         <p className="muted">
@@ -230,6 +234,52 @@ function BypassSection() {
           ))}
         </ul>
       )}
+    </>
+  )
+}
+
+const THEMES: { id: Theme; label: string }[] = [
+  { id: 'system', label: 'System' },
+  { id: 'dark', label: 'Dark' },
+  { id: 'light', label: 'Light' },
+]
+
+/**
+ * Theme and text size. Same source of truth as View in the menu bar: the
+ * change goes to Go, which saves it and broadcasts it back to the UI.
+ */
+function AppearanceSection() {
+  const prefs = usePrefsStore((s) => s.prefs)
+  const [error, setError] = useState<string | null>(null)
+
+  const change = (next: Partial<typeof prefs>) => {
+    setError(null)
+    savePrefs({ ...prefs, ...next }).catch((err) => setError(String(err)))
+  }
+
+  return (
+    <>
+      <h3>Appearance</h3>
+      <div className="appearance">
+        <label htmlFor="pref-theme">Theme</label>
+        <select id="pref-theme" value={prefs.theme} onChange={(e) => change({ theme: e.target.value as Theme })}>
+          {THEMES.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+        <label htmlFor="pref-font">Text size</label>
+        <select id="pref-font" value={prefs.fontSize} onChange={(e) => change({ fontSize: Number(e.target.value) })}>
+          {FONT_SIZES.map((n) => (
+            <option key={n} value={n}>
+              {n} px
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="muted small">System follows macOS. View in the menu bar also has Bigger Text (⌘=), Smaller Text (⌘−) and Actual Size (⌘0).</p>
+      {error && <p className="error-text">{error}</p>}
     </>
   )
 }

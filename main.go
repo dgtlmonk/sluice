@@ -26,7 +26,9 @@ func main() {
 			Assets: assets,
 		},
 		// Matches --bg in frontend/src/style.css so there is no flash on load.
-		BackgroundColour: &options.RGBA{R: 14, G: 16, B: 20, A: 1},
+		// The UI updates it live when the theme changes.
+		BackgroundColour: startupBackground(app.Prefs().Theme),
+		Menu:             app.buildMenu(),
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
 		Bind: []interface{}{
@@ -37,4 +39,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sluice:", err)
 		os.Exit(1)
 	}
+}
+
+// startupBackground is the window colour before the webview paints. System
+// cannot be resolved here without an OS call, so it starts dark (the UI
+// corrects it on first paint).
+func startupBackground(theme string) *options.RGBA {
+	if theme == ThemeLight {
+		return &options.RGBA{R: 255, G: 255, B: 255, A: 1} // --bg, light palette
+	}
+	return &options.RGBA{R: 14, G: 16, B: 20, A: 1} // --bg, dark palette
 }
