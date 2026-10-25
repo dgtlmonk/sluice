@@ -35,6 +35,7 @@ Working rules for Claude Code live in [CLAUDE.md](CLAUDE.md).
 | Match-and-replace | M4 |
 | Intruder attack types | Sniper + cluster bomb in M5; the rest at M8 |
 | Pinning detection | M3, passive, only when the CA trust check passes |
+| Project focus | Security testing and defense (blue team): find leaks and weaknesses; record defender-visible signals such as the JA4 TLS fingerprint |
 | mTLS client certs, session macros | After M8 |
 | OOB interaction server | M7, self-hosted, scope-bound |
 
@@ -405,6 +406,8 @@ Ten milestones, each ending in a working, demoable app. Do them in order; tick t
 - [ ] Results sortable by status, length, and time
 - [ ] WebSockets: frames captured and shown in a viewer
 - [ ] Passive rules: missing security headers, cookie flags, reflected parameters, tokens in URLs
+- [ ] Passive leak rules: secrets and API keys in responses or JS, stack traces and version banners, internal IPs and hostnames, PII patterns
+- [ ] Hex view for decrypted messages (spots CR/LF, null bytes and look-alike characters behind injection and smuggling bugs)
 - [ ] Storage: 7-day TTL with hourly prune, 32 MB stored-body cap, wipe-project (file, sidecars, Keychain key)
 
 **M6 — Deep LLM detection + payload attacks**
