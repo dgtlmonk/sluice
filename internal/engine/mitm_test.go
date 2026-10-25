@@ -21,7 +21,7 @@ import (
 
 // testCA creates a throwaway root CA in a temp dir. Nothing is installed in
 // any keychain or trust store: the test client trusts it via RootCAs.
-func testCA(t *testing.T) (*ca.Authority, *x509.CertPool) {
+func testCA(t testing.TB) (*ca.Authority, *x509.CertPool) {
 	t.Helper()
 	secret := make([]byte, ca.SecretSize)
 	if _, err := rand.Read(secret); err != nil {

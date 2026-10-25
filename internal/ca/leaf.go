@@ -7,6 +7,7 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"strings"
 	"time"
@@ -37,24 +38,7 @@ func (a *Authority) mintLeaf(host string, now time.Time) (*tls.Certificate, erro
 	if err != nil {
 		return nil, err
 	}
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: host},
-		NotBefore:    now.Add(-backdate),
-		NotAfter:     now.Add(-backdate).Add(LeafValidity),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		// serverAuth: this certificate may identify a TLS server, nothing else.
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true, // CA:false
-		SubjectKeyId:          keyID(&a.leafKey.PublicKey),
-		// AuthorityKeyId is copied from the parent's SubjectKeyId by
-		// x509.CreateCertificate.
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		tmpl.IPAddresses = []net.IP{ip}
-	} else {
-		tmpl.DNSNames = []string{host}
-	}
+	tmpl := leafTemplate(host, serial, now, keyID(&a.leafKey.PublicKey))
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, a.root, &a.leafKey.PublicKey, a.rootKey)
 	if err != nil {
 		return nil, fmt.Errorf("ca: sign leaf for %s: %w", host, err)
@@ -68,4 +52,28 @@ func (a *Authority) mintLeaf(host string, now time.Time) (*tls.Certificate, erro
 		PrivateKey:  a.leafKey,
 		Leaf:        leaf,
 	}, nil
+}
+
+// leafTemplate is the per-host certificate shape. It is split out so the
+// benchmarks can sign the same template with other key types.
+func leafTemplate(host string, serial *big.Int, now time.Time, ski []byte) *x509.Certificate {
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: host},
+		NotBefore:    now.Add(-backdate),
+		NotAfter:     now.Add(-backdate).Add(LeafValidity),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		// serverAuth: this certificate may identify a TLS server, nothing else.
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true, // CA:false
+		SubjectKeyId:          ski,
+		// AuthorityKeyId is copied from the parent's SubjectKeyId by
+		// x509.CreateCertificate.
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		tmpl.IPAddresses = []net.IP{ip}
+	} else {
+		tmpl.DNSNames = []string{host}
+	}
+	return tmpl
 }

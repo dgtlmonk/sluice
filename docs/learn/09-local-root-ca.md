@@ -31,6 +31,8 @@ Each link has rules the verifier checks: dates, the host name in the leaf's Subj
 - **Trust health check**: two questions. *Installed*: is this exact certificate (by SHA-256) in the login keychain? *Trusted*: does macOS accept a throwaway leaf for `trust-check.sluice.invalid` signed by it? The second goes through Go's `crypto/x509`, which on macOS asks the OS verifier, so it answers what the browser will decide.
 - **Removing it**: delete "Sluice Local CA …" in Keychain Access (login keychain, Certificates). Do this if you stop using Sluice.
 
+**Measured** (M3, Apple M3 Max): minting a leaf with the shared key takes about 0.94 ms; making a fresh RSA 2048 key for every host pushes that to about 48 ms. Key generation dominates because an RSA key needs two large random primes, found by trial and error, while minting needs only one signature by the root, which is cheap. (A fresh ECDSA P-256 key is also cheap, about the same 0.9 ms, since it is just a random number and one curve multiplication.) Once minted, a host's leaf is cached, and a cache hit takes about 94 ns. The trade-off: whoever steals the shared leaf key can impersonate every host Sluice ever minted a leaf for, not just one. That matters less than it sounds, because those leaves are only trusted on this Mac, through its local root, and the root key sits next to the leaf key anyway.
+
 ## Further reading
 
 - [Wikipedia — Certificate authority](https://en.wikipedia.org/wiki/Certificate_authority) — what a CA does and how browsers decide whom to trust.
