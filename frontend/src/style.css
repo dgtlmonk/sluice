@@ -353,7 +353,7 @@ button.toggle.llm.on {
 
 /* Detail pane */
 
-.detail-tabbed {
+.detail.detail-tabbed {
   display: flex;
   flex-direction: column;
 }
