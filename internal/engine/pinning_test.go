@@ -222,3 +222,68 @@ func TestReceivedAlertShapes(t *testing.T) {
 		t.Fatal("decrypt_error counted as a certificate rejection")
 	}
 }
+
+// The OpenSSL repro: a TLS 1.3 client checks the certificate before it
+// switches to encrypted records, so it sends unknown_ca in plaintext.
+// crypto/tls reports that as "bad record MAC"; the sniffer recovers the
+// alert, so pinning is still flagged.
+func TestPinFlagOnPlaintextAlertInTLS13(t *testing.T) {
+	hc := &helloCapture{}
+	// #nosec G402 -- test client: only the ClientHello is used.
+	_ = tls.Client(hc, &tls.Config{ServerName: testorigin.TLSServerName, MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}).Handshake()
+	e := trustedEnv(t)
+	c := e.connect(t)
+	helloThenWaitForCert(t, c, hc.buf.Bytes())
+	_, _ = c.Write(alertRecord(2, 48))
+	ex := e.rec.wait(t)
+	if !ex.PinSuspected || ex.Unused || !strings.Contains(ex.Err, "bad record MAC") || !strings.Contains(ex.Err, "plaintext alert: tls: unknown certificate authority") {
+		t.Fatalf("exchange = %+v", ex)
+	}
+	if f := e.srv.LearnedHosts(); len(f) != 1 || f[0].Reason != TunnelPinned {
+		t.Fatalf("learned = %+v", f)
+	}
+}
+
+// The sniffer follows record boundaries however the bytes are split, and
+// ignores alerts longer than two bytes (encrypted TLS 1.2 alerts).
+func TestAlertSnifferScan(t *testing.T) {
+	stream := append(append([]byte{22, 3, 1, 0, 3, 1, 2, 3}, 21, 3, 3, 0, 4, 9, 9, 9, 9), alertRecord(2, 42)...)
+	for split := 1; split <= len(stream); split++ {
+		s := &alertSniffer{}
+		for p := stream; len(p) > 0; {
+			k := min(split, len(p))
+			s.scan(p[:k])
+			p = p[k:]
+		}
+		if code, ok := s.alert(); !ok || code != 42 {
+			t.Fatalf("split %d: alert = %d, %v", split, code, ok)
+		}
+	}
+	s := &alertSniffer{}
+	s.scan([]byte{21, 3, 3, 0, 4, 2, 48, 0, 0})
+	if _, ok := s.alert(); ok {
+		t.Fatal("long alert record counted as plaintext")
+	}
+	s = &alertSniffer{}
+	s.scan(alertRecord(1, 0)) // warning close_notify: not kept
+	if _, ok := s.alert(); ok {
+		t.Fatal("warning alert kept")
+	}
+	s.scan(alertRecord(2, 48))
+	s.scan(alertRecord(1, 0)) // a later warning must not mask the fatal one
+	if code, ok := s.alert(); !ok || code != 48 {
+		t.Fatalf("alert = %d, %v", code, ok)
+	}
+}
+
+// A plaintext rejection alert followed by a silent close is a close, not
+// pinning: only a bad-record-MAC failure means the alert ended the handshake.
+func TestNoPinFlagWhenPlaintextAlertDidNotEndHandshake(t *testing.T) {
+	err := &net.OpError{Op: "read", Err: io.EOF}
+	if isLocalBadRecordMAC(err) || isLocalBadRecordMAC(errors.New("local error: tls: bad record MAC")) {
+		t.Fatal("non-OpError or EOF taken as bad record MAC")
+	}
+	if !isLocalBadRecordMAC(&net.OpError{Op: "local error", Err: errors.New(tls.AlertError(20).Error())}) {
+		t.Fatal("bad record MAC not recognised")
+	}
+}

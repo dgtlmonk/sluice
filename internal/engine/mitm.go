@@ -243,9 +243,11 @@ func (cc *clientConn) handleConnect(x *exchange) bool {
 	// Replay the hello (and anything the client already sent behind it) to
 	// crypto/tls, which never knows it was read once already.
 	rest, _ := cc.br.Peek(cc.br.Buffered())
-	raw := &prefixConn{Conn: cc.conn.Conn, pending: append(helloRaw, rest...)}
+	// The sniffer sits between the replayed bytes and crypto/tls so it sees
+	// every client record, including the hello replay. It only reads along.
+	sniff := &alertSniffer{Conn: &prefixConn{Conn: cc.conn.Conn, pending: append(helloRaw, rest...)}}
 	certSent := false
-	tc := tls.Server(raw, &tls.Config{
+	tc := tls.Server(sniff, &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		NextProtos: alpnHTTP11,
 		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -260,7 +262,17 @@ func (cc *clientConn) handleConnect(x *exchange) bool {
 	if err != nil {
 		_ = tc.Close()
 		// Nothing can be answered on a half-done handshake; record why.
-		if certSent && closedWithoutAlert(err) {
+		alert, alerted := receivedAlert(err)
+		if !alerted && isLocalBadRecordMAC(err) {
+			// A plaintext alert crypto/tls could not read (see alertSniffer).
+			// Only this error: on EOF or a timeout the sniffed bytes are not
+			// what ended the handshake.
+			if code, ok := sniff.alert(); ok {
+				alert, alerted = tls.AlertError(code), true
+				err = fmt.Errorf("%w (client sent plaintext alert: %v)", err, alert)
+			}
+		}
+		if certSent && !alerted && closedWithoutAlert(err) {
 			// The client saw our certificate and closed without a word.
 			// That is what browsers do with preconnects: Chromium opens
 			// spare sockets speculatively and drops the ones it does not
@@ -270,7 +282,7 @@ func (cc *clientConn) handleConnect(x *exchange) bool {
 			return false
 		}
 		x.ex.Err = "client TLS handshake: " + err.Error()
-		if certSent && certRejectAlert(err) && s.cfg.CATrusted != nil && s.cfg.CATrusted() {
+		if certSent && alerted && slices.Contains(certRejectAlerts, alert) && s.cfg.CATrusted != nil && s.cfg.CATrusted() {
 			// The client explicitly rejected a leaf it should trust: it
 			// most likely pins the real certificate (or its key). Future
 			// CONNECTs to this host are tunnelled raw so the app keeps
@@ -282,6 +294,7 @@ func (cc *clientConn) handleConnect(x *exchange) bool {
 		return false
 	}
 
+	sniff.done = true
 	serverName := tc.ConnectionState().ServerName
 	if serverName == "" {
 		serverName = host
