@@ -286,6 +286,7 @@ button.toggle.llm.on {
 }
 
 .grid-header .cell {
+  position: relative; /* anchors .col-resizer */
   height: calc(var(--font-size) * 2);
   line-height: calc(var(--font-size) * 2);
   border-right: 1px solid var(--border);
@@ -294,6 +295,29 @@ button.toggle.llm.on {
 .grid-header .sortable:hover {
   background: var(--bg-hover);
   color: var(--text);
+}
+
+/* Drag handle inside a header's right edge (the header clips overflow). */
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.col-resizer:hover,
+.col-resizer:focus-visible,
+.col-resizer.active {
+  background: var(--accent);
+  outline: none;
+}
+
+body.resizing.resizing-col {
+  cursor: col-resize;
 }
 
 .grid-header .sorted {

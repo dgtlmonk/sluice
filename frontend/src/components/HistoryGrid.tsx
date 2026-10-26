@@ -1,5 +1,13 @@
-import { useEffect, useMemo, useRef } from 'react'
-import { columnSizingFeature, createColumnHelper, tableFeatures, useTable } from '@tanstack/react-table'
+import { type KeyboardEvent, type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  columnSizingFeature,
+  createColumnHelper,
+  functionalUpdate,
+  tableFeatures,
+  useTable,
+  type ColumnSizingState,
+  type Updater,
+} from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useExchangeStore, type Exchange } from '../store/exchanges'
 import { rowHeightFor, usePrefsStore } from '../store/prefs'
@@ -13,21 +21,23 @@ const features = tableFeatures({ columnSizingFeature })
 const helper = createColumnHelper<typeof features, Exchange>()
 
 const columns = helper.columns([
-  helper.accessor('id', { header: '#', size: 84 }),
-  helper.accessor('method', { header: 'Method', size: 72 }),
-  helper.accessor((x) => hostLabel(x), { id: 'host', header: 'Host', size: 260 }),
-  helper.accessor('path', { header: 'Path', size: 320 }),
+  helper.accessor('id', { header: '#', size: 84, minSize: 40 }),
+  helper.accessor('method', { header: 'Method', size: 72, minSize: 48 }),
+  helper.accessor((x) => hostLabel(x), { id: 'host', header: 'Host', size: 260, minSize: 80 }),
+  helper.accessor('path', { header: 'Path', size: 320, minSize: 80 }),
   helper.accessor('status', {
     header: 'Status',
     size: 64,
+    minSize: 44,
     cell: (info) => <span className={statusClass(info.getValue())}>{statusText(info.getValue())}</span>,
   }),
-  helper.accessor('respSize', { header: 'Length', size: 84, cell: (info) => info.getValue().toLocaleString() }),
-  helper.accessor('mime', { header: 'MIME', size: 150 }),
-  helper.accessor('startedAt', { header: 'Time', size: 108, cell: (info) => clock(info.getValue()) }),
+  helper.accessor('respSize', { header: 'Length', size: 84, minSize: 48, cell: (info) => info.getValue().toLocaleString() }),
+  helper.accessor('mime', { header: 'MIME', size: 150, minSize: 60 }),
+  helper.accessor('startedAt', { header: 'Time', size: 108, minSize: 60, cell: (info) => clock(info.getValue()) }),
   helper.accessor('isLLM', {
     header: 'LLM',
     size: 52,
+    minSize: 36,
     cell: (info) =>
       info.getValue() ? (
         <span className="llm-flag" title={llmTooltip(info.row.original.llmReason)}>
@@ -40,6 +50,35 @@ const columns = helper.columns([
 // The path column absorbs spare width; the rest stay fixed.
 const GROW_COLUMN = 'path'
 const NUMERIC_COLUMNS = new Set(['id', 'status', 'respSize'])
+
+// Column widths are remembered per viewer in localStorage, like the pane splits
+// (Splitter.tsx): a convenience only, so any failure falls back to the defaults.
+const WIDTHS_KEY = 'sluice.columns.history'
+const MIN_WIDTH = 36 // fallback floor for a column without its own minSize
+const MAX_WIDTH = 2000
+const KEY_STEP = 8 // px per arrow key on a focused resize handle
+const COLUMN_IDS = new Set<string>(columns.map((c) => c.id ?? ('accessorKey' in c ? String(c.accessorKey) : '')))
+
+function readWidths(): ColumnSizingState {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(WIDTHS_KEY) ?? '{}')
+    if (typeof parsed !== 'object' || parsed === null) return {}
+    // Keep only known columns with sane widths; TanStack clamps to minSize.
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([id, w]) => COLUMN_IDS.has(id) && typeof w === 'number' && w > 0 && w <= MAX_WIDTH),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function writeWidths(widths: ColumnSizingState) {
+  try {
+    localStorage.setItem(WIDTHS_KEY, JSON.stringify(widths))
+  } catch {
+    // storage blocked: the widths still apply for this session
+  }
+}
 
 /**
  * History grid. TanStack Virtual spans the whole view (filtered + sorted row
@@ -87,13 +126,97 @@ export function HistoryGrid() {
     return out
   }, [rows, view, viewCount, first, last])
 
+  // Widths are held here (not in table-internal state) so they can be seeded from
+  // and saved to storage. Drags update widths live; storage is written once, on drop.
+  const [columnSizing, setColumnSizing] = useState(readWidths)
+  const dragging = useRef(false)
+  const latestSizing = useRef(columnSizing)
+  const onColumnSizingChange = useCallback((updater: Updater<ColumnSizingState>) => {
+    const next = functionalUpdate(updater, latestSizing.current)
+    latestSizing.current = next
+    setColumnSizing(next)
+    if (!dragging.current) writeWidths(next) // e.g. a double-click reset
+  }, [])
+
   const table = useTable({
     features,
     columns,
     data: windowData,
     getRowId: (x) => String(x.id),
+    state: { columnSizing },
+    onColumnSizingChange,
   })
   const tableRows = table.getRowModel().rows
+
+  // One CSS variable per column, recomputed only when widths change. Header and
+  // body cells both read var(--col-<id>), so they cannot drift apart, and a drag
+  // changes one style object instead of every cell's inline width.
+  const columnVars = useMemo(() => {
+    const vars: Record<string, string> = {}
+    for (const column of table.getAllLeafColumns()) vars[`--col-${column.id}`] = `${column.getSize()}px`
+    return vars as React.CSSProperties
+    // columnSizing is what getSize() reads; the table identity is stable.
+  }, [table, columnSizing])
+
+  // Column being dragged, for the handle's highlight.
+  const [resizing, setResizing] = useState<string | null>(null)
+  const suppressClick = useRef(false)
+  const endDrag = useRef<(() => void) | null>(null)
+  useEffect(() => () => endDrag.current?.(), [])
+
+  const resizeColumn = (id: string, width: number, persist: boolean) => {
+    const column = table.getColumn(id)
+    if (!column) return
+    const min = column.columnDef.minSize ?? MIN_WIDTH
+    dragging.current = !persist
+    table.setColumnSizing((old) => ({ ...old, [id]: Math.round(Math.min(MAX_WIDTH, Math.max(min, width))) }))
+    dragging.current = false
+  }
+
+  // Same drag model as Splitter.tsx: pointer capture keeps move/up events on the
+  // handle even outside the webview, so no document listeners can leak.
+  const onResizePointerDown = (e: PointerEvent<HTMLDivElement>, id: string) => {
+    if (e.button !== 0) return
+    const target = e.currentTarget
+    e.stopPropagation()
+    e.preventDefault() // no text selection while dragging
+    target.focus() // preventDefault skips the focus a click would give
+    target.setPointerCapture(e.pointerId)
+    const startX = e.clientX
+    const startWidth = table.getColumn(id)?.getSize() ?? 0
+    let last = startWidth
+    setResizing(id)
+    const move = (ev: globalThis.PointerEvent) => {
+      last = startWidth + ev.clientX - startX
+      resizeColumn(id, last, false)
+    }
+    const end = () => {
+      target.removeEventListener('pointermove', move)
+      for (const t of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) target.removeEventListener(t, end)
+      document.body.classList.remove('resizing', 'resizing-col')
+      endDrag.current = null
+      setResizing(null)
+      // The click that ends this drag would toggle sort; ignore only that one.
+      suppressClick.current = true
+      setTimeout(() => (suppressClick.current = false), 0)
+      resizeColumn(id, last, true) // persist once, when the drag settles
+    }
+    target.addEventListener('pointermove', move)
+    for (const t of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) target.addEventListener(t, end)
+    document.body.classList.add('resizing', 'resizing-col')
+    endDrag.current = end
+  }
+
+  const onResizeKeyDown = (e: KeyboardEvent<HTMLDivElement>, id: string) => {
+    const column = table.getColumn(id)
+    if (!column) return
+    if (e.key === 'ArrowLeft') resizeColumn(id, column.getSize() - KEY_STEP, true)
+    else if (e.key === 'ArrowRight') resizeColumn(id, column.getSize() + KEY_STEP, true)
+    else if (e.key === 'Home') column.resetSize()
+    else return
+    e.preventDefault()
+    e.stopPropagation()
+  }
 
   useEffect(() => {
     if (!following || viewCount === 0) return
@@ -115,7 +238,7 @@ export function HistoryGrid() {
   }, [view, following, virtualizer])
 
   return (
-    <div className="grid">
+    <div className="grid" style={columnVars}>
       <div className="grid-header" role="row">
         {table.getHeaderGroups()[0].headers.map((header) => {
           const id = header.column.id as SortColumn
@@ -127,11 +250,31 @@ export function HistoryGrid() {
               aria-sort={dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : 'none'}
               title="Sort: ascending, descending, off"
               className={cellClass(id) + ' sortable' + (dir ? ' sorted' : '')}
-              style={cellStyle(id, header.column.getSize())}
-              onClick={() => toggleSort(id)}
+              style={cellStyle(id)}
+              onClick={() => {
+                if (!suppressClick.current) toggleSort(id)
+              }}
             >
               <table.FlexRender header={header} />
               {dir && <span className="sort-arrow">{dir === 'asc' ? '\u25B2' : '\u25BC'}</span>}
+              <div
+                className={'col-resizer' + (resizing === id ? ' active' : '')}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label={`Resize ${String(header.column.columnDef.header)} column`}
+                aria-valuenow={Math.round(header.column.getSize())}
+                aria-valuemin={header.column.columnDef.minSize ?? MIN_WIDTH}
+                aria-valuemax={MAX_WIDTH}
+                title="Drag to resize; double-click to reset"
+                tabIndex={0}
+                onPointerDown={(e) => onResizePointerDown(e, id)}
+                onKeyDown={(e) => onResizeKeyDown(e, id)}
+                onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => {
+                  e.stopPropagation()
+                  header.column.resetSize()
+                }}
+              />
             </div>
           )
         })}
@@ -163,7 +306,7 @@ export function HistoryGrid() {
                     key={cell.id}
                     role="cell"
                     className={cellClass(cell.column.id)}
-                    style={cellStyle(cell.column.id, cell.column.getSize())}
+                    style={cellStyle(cell.column.id)}
                   >
                     <table.FlexRender cell={cell} />
                   </div>
@@ -183,8 +326,10 @@ function cellClass(columnId: string): string {
   return NUMERIC_COLUMNS.has(columnId) ? 'cell num' : 'cell'
 }
 
-function cellStyle(columnId: string, size: number): React.CSSProperties {
-  return columnId === GROW_COLUMN ? { flex: `1 1 ${size}px` } : { flex: `0 0 ${size}px` }
+// Widths come from the per-column CSS variables set on .grid (see columnVars).
+function cellStyle(columnId: string): React.CSSProperties {
+  const width = `var(--col-${columnId})`
+  return columnId === GROW_COLUMN ? { flex: `1 1 ${width}` } : { flex: `0 0 ${width}` }
 }
 
 function hostLabel(x: Exchange): string {
