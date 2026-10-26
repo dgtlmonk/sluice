@@ -405,9 +405,9 @@ Ten milestones, each ending in a working, demoable app. Do them in order; tick t
 - [ ] 10k requests in a load test keep the UI responsive, with zero storage drops
 **M3 — HTTPS interception**
 
-- [ ] Root CA generated on first run; Settings can install it to the login keychain and export the PEM; trust health check reports installed/trusted
-- [ ] CONNECT tunnels decrypted with ALPN forced to http/1.1; launched Chrome loads https://example.com with no warnings
-- [ ] Bypass list, h2-only clients and h2-only hosts tunnelled raw without decrypting; pinning aborts flagged per host only when the CA is trusted
+- [x] Root CA generated on first run; Settings can install it to the login keychain and export the PEM; trust health check reports installed/trusted
+- [x] CONNECT tunnels decrypted with ALPN forced to http/1.1; launched Chrome loads https://example.com with no warnings
+- [x] Bypass list, h2-only clients and h2-only hosts tunnelled raw without decrypting; pinning aborts flagged per host only when the CA is trusted
 - [x] Leaf minting time measured with one shared leaf key
 
 **M3.5 — Background traffic (decided 2026-10-25)**
