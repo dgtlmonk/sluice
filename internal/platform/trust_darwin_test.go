@@ -71,8 +71,8 @@ func TestInstallRootCommand(t *testing.T) {
 		t.Fatalf("%d calls", len(*calls))
 	}
 	c := (*calls)[0]
-	want := []string{"add-trusted-cert", "-r", "trustRoot", "-k", "/k/login.keychain-db"}
-	if strings.Join(c.args[:5], " ") != strings.Join(want, " ") {
+	want := []string{"add-trusted-cert", "-r", "trustRoot", "-p", "ssl", "-k", "/k/login.keychain-db"}
+	if strings.Join(c.args[:len(want)], " ") != strings.Join(want, " ") {
 		t.Errorf("args %q", c.args)
 	}
 	if c.pem != string(a.CertPEM()) {

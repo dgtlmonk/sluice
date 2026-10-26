@@ -4,9 +4,13 @@ package platform
 
 // macOS certificate trust, through /usr/bin/security like the secret store.
 //
-// Install: `security add-trusted-cert -r trustRoot -k <login keychain> <pem>`
+// Install: `security add-trusted-cert -r trustRoot -p ssl -k <login keychain> <pem>`
 // imports the certificate and adds a user-level trust setting marking it as
-// a root for all policies. macOS shows a password dialog for that change;
+// a root for the SSL policy only. Without -p the root is trusted for every
+// policy (code signing, S/MIME, IPsec...), so a leaked CA key could sign
+// apps or mail the Mac accepts; Sluice only needs TLS server trust. Running
+// it again replaces the certificate's trust settings, so a reinstall also
+// narrows an older all-policies install. macOS shows a password dialog for that change;
 // this is the "user-clicked install" from SPEC.md, and Sluice never runs it
 // on its own.
 //
@@ -82,7 +86,7 @@ func (s securityTrust) InstallRoot(root *x509.Certificate) error {
 }
 
 func installArgs(kc, pemPath string) []string {
-	return []string{"add-trusted-cert", "-r", "trustRoot", "-k", kc, pemPath}
+	return []string{"add-trusted-cert", "-r", "trustRoot", "-p", "ssl", "-k", kc, pemPath}
 }
 
 func (s securityTrust) Check(root, probe *x509.Certificate, probeHost string) (TrustReport, error) {
