@@ -210,6 +210,19 @@ The main goal is functionality. These items are tracked for a later optimization
 - **Learned TLS hosts (M3):** pinned / h2-only flags are in memory only (capped at 4096 hosts); persist them per project.
 - **Measure:** engine heap (`runtime.MemStats`) and webview RSS under sustained traffic, e.g. 1M synthetic exchanges.
 
+## Known gaps (carry forward)
+
+Found during M3 and not yet fixed. Each one is closed by the milestone named, or earlier if it bites.
+
+- **Engine scope check (before M4 ships):** the scope list is not enforced in the engine yet. Repeater, Fuzzer and MCP sends must refuse out-of-scope hosts, redirect hops and resolved IPs in the engine, not only in the UI.
+- **SNI vs CONNECT host:** a ClientHello whose SNI differs from the CONNECT host is not refused; refuse it or record both (M4).
+- **TLS facts not stored:** JA4, tunnel reason and the pinning flag live in memory only; the store has no schema for them, so they vanish on restart (M4).
+- **Old CONNECT rows:** rows stored before M3 show `http://host:443`; display them as `https` (M4).
+- **Raw tunnel idle timeout:** can cut long-lived tunnels such as WebSockets (M5, with WebSocket capture).
+- **Leaf cache never expires:** cached leaves outlive their ~397-day validity in a long session; evict on expiry (see Optimization backlog, bounded caches).
+- **`cmd/sluice-proxy`:** the headless binary does not have the M3 TLS path wired (M4).
+- **Perf: pool health peek:** see Optimization backlog (parked until the user says).
+
 ## Storage
 
 One encrypted SQLite file per project (`*.sluice`), mode 0600, written by a single background writer that drains the storage queue in batches.
