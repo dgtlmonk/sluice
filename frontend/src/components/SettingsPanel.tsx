@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   bypassHosts,
   type CAState,
@@ -76,9 +76,22 @@ export function SettingsPanel({ onClose }: Props) {
       return 'Installed to the login keychain.'
     })
 
+  // Close on a backdrop click only when the press also started there. A text
+  // selection dragged out of the panel ends on the backdrop, and the browser
+  // fires click on the common ancestor, which would close the panel.
+  const pressedBackdrop = useRef(false)
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <section className="modal settings" role="dialog" aria-label="Settings" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="modal-backdrop"
+      onPointerDown={(e) => {
+        pressedBackdrop.current = e.target === e.currentTarget
+      }}
+      onClick={(e) => {
+        if (pressedBackdrop.current && e.target === e.currentTarget) onClose()
+      }}
+    >
+      <section className="modal settings" role="dialog" aria-label="Settings">
         <header className="modal-head">
           <h2>Settings</h2>
           <button onClick={onClose} aria-label="Close">
