@@ -41,6 +41,66 @@ So a silent close says nothing about the certificate. A TLS client that actually
 
 The rule for any detector: count the signal that *means* the thing, not one that merely often comes with it. False positives here are costly: the host stops being decrypted.
 
+## Lesson: the plaintext alert
+
+The first acceptance run used macOS `curl --cacert /etc/ssl/cert.pem` to
+play a pinned client. It could not fail: Apple's curl falls back to the
+login keychain, so it trusted Sluice anyway. A test that cannot fail proves
+nothing.
+
+`openssl s_client -CAfile /etc/ssl/cert.pem -verify_return_error` does not
+read the keychain, so it rejects Sluice's leaf. It still was not flagged.
+In TLS 1.3 a client switches to encrypted records only after it has checked
+the server's Finished. OpenSSL checks the certificate first and sends
+`unknown_ca` as a plaintext record (type 21, two bytes). Go's server already
+expects encrypted records there, so `crypto/tls` reports only
+`local error: tls: bad record MAC` and the alert is lost. Browsers and Go
+clients send the alert encrypted, which `crypto/tls` decodes.
+
+Fix: a read-only sniffer under the handshake (`internal/engine/alertsniff.go`)
+follows the client's record headers and keeps the last plaintext fatal
+alert. It is used only when the handshake failed with "bad record MAC".
+
+Rule: test each pinning signal with more than one TLS stack. Why: clients
+disagree on when and how they say "no".
+
+## How apps hide pins, and why it only buys time
+
+A pin is usually a hash of the server's public key (`sha256/...`). In plain
+text, a strings search finds it in minutes. Common ways to hide it, weakest
+first:
+
+1. **Encode or split it.** XOR with a key, Base64, pieces in several files,
+   rebuilt at run time. Beats a text search. The key ships in the same app,
+   and the rebuilt pin sits in memory where a debugger can read it.
+2. **Rename and obfuscate.** ProGuard and R8 shrink and rename
+   (`verifyCertificatePin()` becomes `a()`). Control-flow flattening and
+   string encryption come from commercial tools (DexGuard for Android,
+   iXGuard for iOS) or O-LLVM, not from ProGuard.
+3. **Move the check to native code** (C/C++). Harder to read than Java or
+   Swift, but Ghidra turns machine code back into C-like pseudocode.
+4. **Let the OS pin.** Android `network_security_config.xml`, iOS
+   `NSPinnedDomains`. Fewer bugs, so it is the best default, but not hard
+   to beat: on Android, unzip, edit the XML, re-sign; and hook tools target
+   the system TLS checks directly.
+
+The weakness common to all four: attackers rarely look for the pin. They
+switch the check off. One Frida hook that makes "is this certificate OK?"
+always return yes beats every trick above; objection and similar tools ship
+ready-made scripts for it.
+
+What actually holds: integrity checks (root/jailbreak and hook detection)
+and server-side attestation (Apple App Attest, Google Play Integrity), where
+the server, not the phone, decides whether the app is genuine.
+
+Rule: hiding a pin slows an attacker; moving the trust decision to the
+server stops one. Why: the attacker owns the device, so anything on it can
+be read or changed.
+
+For Sluice, "pinning suspected" is a good sign about an app: it tries to
+resist interception. An app that does not pin can be read by any CA the
+device trusts.
+
 ## Further reading
 
 - [mitmproxy — Ignoring domains](https://docs.mitmproxy.org/stable/howto-ignoredomains/) — the same feature in mitmproxy, and why ClientHello peeking is needed.
@@ -51,3 +111,13 @@ The rule for any detector: count the signal that *means* the thing, not one that
 - [RFC 7301 §3.2 — ALPN](https://www.rfc-editor.org/rfc/rfc7301) — the `no_application_protocol` alert.
 - [RFC 8446 §4.1.2 — ClientHello](https://www.rfc-editor.org/rfc/rfc8446) — the message the reader parses.
 - [The Illustrated TLS 1.3 Connection](https://tls13.xargs.org/) — a real ClientHello, byte by byte.
+- [OWASP MASTG — Certificate Pinning](https://mas.owasp.org/MASTG/knowledge/android/MASVS-NETWORK/MASTG-KNOW-0015/) — how mobile apps pin.
+- [OWASP MASTG — Bypassing Certificate Pinning](https://mas.owasp.org/MASTG/techniques/android/MASTG-TECH-0012/) — the attacker side: hooks, patching, objection.
+- [Apple — Identity Pinning](https://developer.apple.com/news/?id=g9ejcf8y) — `NSPinnedDomains` and how iOS pins without code.
+- [Apple — NSPinnedDomains](https://developer.apple.com/documentation/bundleresources/information_property_list/nsapptransportsecurity/nspinneddomains) — the Info.plist key.
+- [Apple — Establishing your app's integrity (App Attest)](https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity) — server-side proof the app is genuine.
+- [Google — Play Integrity API](https://developer.android.com/google/play/integrity) — the Android equivalent.
+- [Android — Shrink, obfuscate, and optimize (R8)](https://developer.android.com/build/shrink-code) — what R8 renaming does and does not do.
+- [Frida](https://frida.re/docs/home/) and [objection](https://github.com/sensepost/objection) — the runtime hooking tools behind most pinning bypasses.
+- [Ghidra](https://ghidra-sre.org/) — the free decompiler that reads native code.
+- [RFC 8446 §5 — TLS 1.3 record protocol](https://www.rfc-editor.org/rfc/rfc8446#section-5) — record types, and when records become encrypted.
