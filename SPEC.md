@@ -410,12 +410,6 @@ Ten milestones, each ending in a working, demoable app. Do them in order; tick t
 - [x] Bypass list, h2-only clients and h2-only hosts tunnelled raw without decrypting; pinning aborts flagged per host only when the CA is trusted
 - [x] Leaf minting time measured with one shared leaf key
 
-**M3.5 — Background traffic (decided 2026-10-25)**
-
-- [ ] Each exchange records the client process (name, PID, bundle ID) by mapping the client's loopback source port to its owning process; the lookup goes through `internal/platform`
-- [ ] Background traffic view: exchanges grouped by app, then host; hosts first seen in this project are marked new
-- [ ] App and first-seen columns are filterable in History (`app:brave`, `new:true`)
-
 **M4 — Intercept + Repeater**
 
 - [ ] Intercept toggle holds requests (with timeout); edit, forward, and drop all work
@@ -443,6 +437,12 @@ Ten milestones, each ending in a working, demoable app. Do them in order; tick t
 
 - [ ] Local server serves pages with hidden instructions; a browsing/RAG agent that fetches them is caught
 - [ ] Multi-turn runs inject at turn N against the Damn Vulnerable LLM Agent
+
+**M3.5 — Background traffic (decided 2026-10-25; moved after M6.5 on 2026-10-26: AppSec focus puts Repeater, passive checks and LLM work first)**
+
+- [ ] Each exchange records the client process (name, PID, bundle ID) by mapping the client's loopback source port to its owning process; the lookup goes through `internal/platform`
+- [ ] Background traffic view: exchanges grouped by app, then host; hosts first seen in this project are marked new
+- [ ] App and first-seen columns are filterable in History (`app:brave`, `new:true`)
 
 **M7 — Scanner integration + MCP server**
 
