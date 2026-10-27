@@ -1,7 +1,8 @@
-import { type ReactNode, useMemo, useState } from 'react'
-import type { ExchangeView } from '../bridge'
+import { memo, type ReactNode, useState } from 'react'
 import { asStringList, useStored } from '../hooks/useStored'
-import { inspect, type ExchangeContext, type Flag, type Protocol, type ProtocolInfo, type Row, type Section, type SectionId } from '../inspect/inspect'
+import type { Flag, IndexedRow, Inspection, Protocol, ProtocolInfo, Row, Section, SectionId, SectionMatch } from '../inspect/inspect'
+import { fromFirstHit, matches, type Matcher } from '../view/search'
+import { Highlight } from './Highlight'
 
 /** Sections open the first time; after that the viewer's choice is remembered. */
 const DEFAULT_OPEN: readonly SectionId[] = ['attributes', 'query', 'body', 'reqCookies', 'resCookies']
@@ -17,11 +18,17 @@ const TITLE_MAX = 2000
 const ROW_PAGE = 500
 
 type Props = {
-  view: ExchangeView | null
-  ctx: ExchangeContext
+  /** The selected exchange's id: per-row state is reset when it changes. */
+  exchangeId: number | null
+  /** The parsed exchange (DetailPane parses it, as it also counts the search's matches). */
+  result: Inspection | null
+  /** result's sections after the search: only the matching rows while searching. */
+  sections: readonly SectionMatch[]
   error: string | null
   /** True when shown as a tab panel (grouped layout), false beside the messages. */
   asTab: boolean
+  /** The detail pane's search, to highlight hits. Null when there is no search. */
+  matcher: Matcher | null
 }
 
 /**
@@ -31,11 +38,11 @@ type Props = {
  * SECURITY: every row is captured traffic (untrusted). It is rendered only as
  * React text children and title attributes, never as HTML.
  */
-export function Inspector({ view, ctx, error, asTab }: Props) {
+// Memo: the detail pane re-renders on every Enter in the search field; the
+// Inspector's props do not change then, so it is skipped.
+export const Inspector = memo(function Inspector({ exchangeId, result, sections, error, asTab, matcher }: Props) {
   const [openIds, setOpenIds] = useStored<string[]>('sluice.inspector.sections', [...DEFAULT_OPEN], asStringList)
   const [raw, setRaw] = useState(false)
-  // A fixed "now" per exchange keeps the parse pure and the memo stable.
-  const result = useMemo(() => (view ? inspect(view.request, view.response, ctx, Date.now()) : null), [view, ctx])
 
   const toggle = (id: SectionId) => setOpenIds(openIds.includes(id) ? openIds.filter((x) => x !== id) : [...openIds, id])
 
@@ -53,35 +60,52 @@ export function Inspector({ view, ctx, error, asTab }: Props) {
         </button>
       </header>
       {/* Keyed by exchange so per-row expand state and row paging never carry over to another one. */}
-      <div className="insp-scroll" key={view?.id ?? 'none'}>
+      <div className="insp-scroll" key={exchangeId ?? 'none'}>
         {error && <div className="insp-note detail-error">error: {error}</div>}
         {!error && !result && <div className="insp-note muted">Loading…</div>}
-        {result?.sections.map((s) => (
-          <InspectorSection key={s.id} section={s} open={openIds.includes(s.id)} onToggle={() => toggle(s.id)} raw={raw}>
-            {s.id === 'attributes' && <ProtocolRow info={result.protocol} />}
-          </InspectorSection>
-        ))}
+        {result &&
+          sections.map(({ section: s, rows, protocol }) => (
+            <InspectorSection
+              key={s.id}
+              section={s}
+              rows={rows}
+              matcher={matcher}
+              open={openIds.includes(s.id)}
+              onToggle={() => toggle(s.id)}
+              raw={raw}
+            >
+              {protocol && <ProtocolRow info={result.protocol} matcher={matcher} />}
+            </InspectorSection>
+          ))}
       </div>
     </div>
   )
-}
+})
 
 type SectionProps = {
   section: Section
+  /** The rows to show: all of them, or those matching the search. */
+  rows: readonly IndexedRow[]
+  matcher: Matcher | null
   open: boolean
   onToggle: () => void
   raw: boolean
   children?: ReactNode
 }
 
-function InspectorSection({ section, open, onToggle, raw, children }: SectionProps) {
+function InspectorSection({ section, rows, matcher, open, onToggle, raw, children }: SectionProps) {
   const [limit, setLimit] = useState(ROW_PAGE)
   const headId = `insp-${section.id}-head`
   const bodyId = `insp-${section.id}-body`
-  const count = section.rows.length + (section.id === 'attributes' ? 1 : 0) // + Protocol
-  const hidden = section.rows.length - limit
+  const extra = section.id === 'attributes' ? 1 : 0 // + Protocol
+  const count = section.rows.length + extra
+  const found = rows.length + (children ? extra : 0)
+  const searching = matcher !== null
+  const hidden = rows.length - limit
+  const countText = searching ? `${found}/${count}` : String(count)
+  const countSpoken = searching ? `${found} of ${count} ${count === 1 ? 'item' : 'items'} match` : `${count} ${count === 1 ? 'item' : 'items'}`
   return (
-    <section className={`insp-section${open ? ' open' : ''}`}>
+    <section className={`insp-section${open ? ' open' : ''}${searching && found === 0 ? ' nomatch' : ''}`}>
       <h3>
         {/* aria-controls only while the body exists: it must point at a mounted element. */}
         <button id={headId} className="insp-toggle" aria-expanded={open} aria-controls={open ? bodyId : undefined} onClick={onToggle}>
@@ -90,17 +114,15 @@ function InspectorSection({ section, open, onToggle, raw, children }: SectionPro
           </span>
           <span className="insp-section-title">{section.title}</span>
           <span className="insp-count" aria-hidden="true">
-            {count}
+            {countText}
           </span>
-          <span className="sr-only">
-            , {count} {count === 1 ? 'item' : 'items'}
-          </span>
+          <span className="sr-only">, {countSpoken}</span>
         </button>
       </h3>
       {open && (
         <div id={bodyId} role="region" aria-labelledby={headId} className="insp-body">
           {section.note && <div className="insp-note">{section.note}</div>}
-          {(section.rows.length > 0 || children) && (
+          {(rows.length > 0 || children) && (
             <table className="insp-table">
               <thead className="sr-only">
                 <tr>
@@ -111,8 +133,8 @@ function InspectorSection({ section, open, onToggle, raw, children }: SectionPro
               <tbody>
                 {children}
                 {/* Index keys: duplicate names are kept, in wire order. */}
-                {section.rows.slice(0, limit).map((r, i) => (
-                  <InspectorRow key={i} row={r} raw={raw} />
+                {rows.slice(0, limit).map(([i, r]) => (
+                  <InspectorRow key={i} row={r} raw={raw} matcher={matcher} />
                 ))}
               </tbody>
             </table>
@@ -120,12 +142,13 @@ function InspectorSection({ section, open, onToggle, raw, children }: SectionPro
           {hidden > 0 && (
             <div className="insp-more">
               <span className="muted">
-                Showing {limit.toLocaleString()} of {section.rows.length.toLocaleString()}.
+                Showing {limit.toLocaleString()} of {rows.length.toLocaleString()}.
               </span>
               <button onClick={() => setLimit(limit + ROW_PAGE)}>Show {Math.min(hidden, ROW_PAGE).toLocaleString()} more</button>
             </div>
           )}
-          {section.rows.length === 0 && !section.note && !children && <div className="insp-note muted">None.</div>}
+          {count === 0 && !section.note && <div className="insp-note muted">None.</div>}
+          {searching && count > 0 && found === 0 && <div className="insp-note muted">No matches.</div>}
         </div>
       )}
     </section>
@@ -133,10 +156,12 @@ function InspectorSection({ section, open, onToggle, raw, children }: SectionPro
 }
 
 /** Which HTTP version the exchange used, as Burp's HTTP/1 | HTTP/2 pill. */
-function ProtocolRow({ info }: { info: ProtocolInfo }) {
+function ProtocolRow({ info, matcher }: { info: ProtocolInfo; matcher: Matcher | null }) {
   return (
     <tr>
-      <th scope="row">Protocol</th>
+      <th scope="row">
+        <Highlight text="Protocol" matcher={matcher} />
+      </th>
       <td>
         <span className="insp-pills" role="group" aria-label={`Protocol: ${info.used}`}>
           {PROTOCOLS.map((p) => (
@@ -146,20 +171,29 @@ function ProtocolRow({ info }: { info: ProtocolInfo }) {
           ))}
           {info.used === 'unknown' && <span className="muted">unknown</span>}
         </span>
-        <div className="insp-detail">{info.note}</div>
+        <div className="insp-detail">
+          <Highlight text={info.note} matcher={matcher} />
+        </div>
         {info.flag && <Flags flags={[info.flag]} />}
       </td>
     </tr>
   )
 }
 
-function InspectorRow({ row, raw }: { row: Row; raw: boolean }) {
+function InspectorRow({ row, raw, matcher }: { row: Row; raw: boolean; matcher: Matcher | null }) {
   const [expanded, setExpanded] = useState(false)
   const name = raw ? row.rawName : row.name
   const shown = raw ? row.raw : row.value
   const other = raw ? row.value : row.raw
-  const long = shown.length > LONG_VALUE || shown.includes('\n')
+  const long = isLong(shown)
   const title = other !== shown ? `${raw ? 'decoded' : 'raw'}: ${clip(other)}` : clip(shown)
+  // A collapsed long text is cut at the cell edge: show it from its first
+  // hit, so the highlight is not lost past the ellipsis.
+  const nameText = isLong(name) && matcher ? fromFirstHit(name, matcher) : name
+  const valueText = long && !expanded && matcher ? fromFirstHit(shown, matcher) : shown
+  // The search also matches the form the Raw values toggle hides; without
+  // this note such a row would look like a false hit.
+  const hiddenHit = matcher !== null && !matches(name, matcher) && !matches(shown, matcher) && !(row.detail !== undefined && matches(row.detail, matcher))
   const toggle = () => {
     // A click that ends a text selection is a copy, not a toggle.
     if (window.getSelection()?.toString()) return
@@ -170,7 +204,7 @@ function InspectorRow({ row, raw }: { row: Row; raw: boolean }) {
       <th scope="row">
         <div className="insp-name">
           <span className="insp-name-text" title={clip(name)}>
-            {name || <span className="muted">(no name)</span>}
+            {name ? <Highlight text={nameText} matcher={matcher} /> : <span className="muted">(no name)</span>}
           </span>
           {row.dupe && <DupeBadge flag={row.dupe} count={row.dupes} />}
         </div>
@@ -178,7 +212,7 @@ function InspectorRow({ row, raw }: { row: Row; raw: boolean }) {
       <td>
         <div className="insp-value">
           <span className="insp-text" title={title} onClick={long ? toggle : undefined}>
-            {shown === '' ? <span className="muted">(empty)</span> : shown}
+            {shown === '' ? <span className="muted">(empty)</span> : <Highlight text={valueText} matcher={matcher} />}
           </span>
           {long && (
             <button
@@ -191,7 +225,12 @@ function InspectorRow({ row, raw }: { row: Row; raw: boolean }) {
             </button>
           )}
         </div>
-        {row.detail && <div className="insp-detail">{row.detail}</div>}
+        {row.detail && (
+          <div className="insp-detail">
+            <Highlight text={row.detail} matcher={matcher} />
+          </div>
+        )}
+        {hiddenHit && <div className="insp-detail">Matches {raw ? 'the decoded form (turn off Raw values)' : 'as captured (turn on Raw values)'}</div>}
         {row.flags.length > 0 && <Flags flags={row.flags} />}
       </td>
     </tr>
@@ -224,3 +263,5 @@ function Flags({ flags }: { flags: readonly Flag[] }) {
 }
 
 const clip = (s: string) => (s.length > TITLE_MAX ? `${s.slice(0, TITLE_MAX)}…` : s)
+
+const isLong = (s: string) => s.length > LONG_VALUE || s.includes('\n')

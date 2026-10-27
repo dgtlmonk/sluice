@@ -23,6 +23,8 @@
  *     names, header names with spaces), the row says so.
  */
 
+import { matches, type Matcher } from '../view/search'
+
 /** One header line, as the detail pane receives it (main.HeaderField). */
 export type HeaderLine = { readonly name: string; readonly value: string; readonly malformed: boolean }
 
@@ -1011,3 +1013,45 @@ export function inspect(req: MessageInput, res: MessageInput, ctx: ExchangeConte
   ]
   return { protocol: protocolInfo(req, res, line.version, ctx), sections }
 }
+
+// ---------------------------------------------------------------------------
+// Search (the detail pane's search field)
+// ---------------------------------------------------------------------------
+
+/** A row with its index in its section: the index stays its key while a search hides other rows. */
+export type IndexedRow = readonly [number, Row]
+
+/** A section as the search leaves it. */
+export type SectionMatch = {
+  readonly section: Section
+  /** Every row without a search; only the matching ones with one. */
+  readonly rows: readonly IndexedRow[]
+  /** Whether the Protocol row is shown (only ever in the attributes section). */
+  readonly protocol: boolean
+}
+
+/**
+ * A row matches on its name, value or detail (a cookie's attributes), decoded
+ * or as captured: the Raw values toggle only changes which form is shown.
+ */
+export const rowMatches = (r: Row, m: Matcher): boolean =>
+  matches(r.name, m) || matches(r.value, m) || matches(r.rawName, m) || matches(r.raw, m) || (r.detail !== undefined && matches(r.detail, m))
+
+const protocolMatches = (info: ProtocolInfo, m: Matcher) => matches('Protocol', m) || matches(info.used, m) || matches(info.note, m)
+
+/** Every section with the rows the search leaves; all rows when there is no search. */
+export function searchInspection(result: Inspection, matcher: Matcher | null): SectionMatch[] {
+  const protocol = matcher === null || protocolMatches(result.protocol, matcher)
+  return result.sections.map((section) => {
+    const all = section.rows.map((r, i): IndexedRow => [i, r])
+    return {
+      section,
+      rows: matcher === null ? all : all.filter(([, r]) => rowMatches(r, matcher)),
+      protocol: section.id === 'attributes' && protocol,
+    }
+  })
+}
+
+/** How many rows the search leaves in the Inspector, the Protocol row included. */
+export const matchedRows = (sections: readonly SectionMatch[]): number =>
+  sections.reduce((n, s) => n + s.rows.length + (s.protocol ? 1 : 0), 0)

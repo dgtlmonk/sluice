@@ -15,6 +15,11 @@
   --ok: #57ab5a;
   --redirect: #6cb6ff;
   --llm: #c297ff;
+  /* Search hits in the detail pane; --mark-current is the one Enter jumped to. */
+  --mark-bg: #5c4813;
+  --mark-text: #f5e7b8;
+  --mark-current-bg: #d29922;
+  --mark-current-text: #0e1014;
 
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
@@ -46,6 +51,10 @@
   --ok: #18733a;
   --redirect: #0550ae;
   --llm: #7340cf;
+  --mark-bg: #fff0a3;
+  --mark-text: #1f2328;
+  --mark-current-bg: #f0a30a;
+  --mark-current-text: #1f2328;
 }
 
 *,
@@ -178,7 +187,8 @@ button.danger {
   display: flex;
 }
 
-.filter-input input {
+.filter-input input,
+.detail-search-input input {
   flex: 1;
   min-width: 0;
   padding: 3px 26px 3px 8px;
@@ -190,11 +200,13 @@ button.danger {
   user-select: text;
 }
 
-.filter-input input::placeholder {
+.filter-input input::placeholder,
+.detail-search-input input::placeholder {
   color: var(--text-muted);
 }
 
-.filter-input input:focus {
+.filter-input input:focus,
+.detail-search-input input:focus {
   border-color: var(--accent);
 }
 
@@ -429,6 +441,56 @@ body.resizing.resizing-col {
 .detail-tablist {
   display: flex;
   gap: 4px;
+}
+
+/* Search: always visible between the view tabs and the layout toggle. */
+.detail-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-left: 8px;
+}
+
+.detail-search-input {
+  position: relative;
+  display: flex;
+  width: calc(var(--font-size) * 15);
+  min-width: calc(var(--font-size) * 6);
+  flex: 0 1 auto;
+}
+
+.detail-search-input input {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+.detail-search-input .filter-clear {
+  line-height: 1.3;
+}
+
+.detail-search-count {
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail mark {
+  background: var(--mark-bg);
+  color: var(--mark-text);
+  border-radius: 2px;
+}
+
+.detail mark.current {
+  background: var(--mark-current-bg);
+  color: var(--mark-current-text);
+  box-shadow: 0 0 0 1px var(--mark-current-bg);
+}
+
+/* A section with no rows matching the search. */
+.insp-section.nomatch .insp-section-title {
+  color: var(--text-muted);
+  font-weight: normal;
 }
 
 /* Layout toggle: grouped (Response | Inspector tabs) or three columns. */
