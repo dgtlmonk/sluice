@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ExchangeDetail, ExchangeTLS, type ExchangeTLSState, type ExchangeView, type MessageView } from '../bridge'
+import { asBoolean, useStored } from '../hooks/useStored'
+import type { ExchangeContext } from '../inspect/inspect'
 import { useExchangeStore } from '../store/exchanges'
 import { statusText } from '../view/status'
+import { Inspector } from './Inspector'
 import { Splitter, useSplit } from './Splitter'
 
 type Tab = 'raw' | 'headers'
@@ -20,6 +23,9 @@ export function DetailPane() {
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [tab, setTab] = useState<Tab>('raw')
   const cols = useSplit('sluice.split.reqres', 0.5, 0.15, 0.85)
+  // Inspector: open/closed and its width (the message columns' share) are remembered.
+  const [inspectorOpen, setInspectorOpen] = useStored('sluice.inspector.open', true, asBoolean)
+  const side = useSplit('sluice.split.inspector', 0.7, 0.3, 0.85)
 
   useEffect(() => {
     setLoaded(null)
@@ -33,21 +39,31 @@ export function DetailPane() {
     }
   }, [selected])
 
+  const tunnel = loaded && 'tls' in loaded ? (loaded.tls.tunnel ?? '') : ''
+  const ja4 = loaded && 'tls' in loaded ? (loaded.tls.ja4 ?? '') : ''
+  const ctx = useMemo<ExchangeContext>(
+    () => ({ scheme: selected?.scheme ?? '', host: selected?.host ?? '', port: selected?.port ?? 0, tunnel, ja4 }),
+    [selected, tunnel, ja4],
+  )
+
   if (!selected) {
     return <section className="detail detail-empty">Select a row to see its request and response.</section>
   }
 
   const view = loaded && 'view' in loaded ? loaded.view : null
   const tls = loaded && 'tls' in loaded ? loaded.tls : null
+  const error = loaded && 'error' in loaded ? loaded.error : null
   return (
     <section className="detail detail-tabbed">
-      <nav className="detail-tabs" role="tablist">
-        {(['raw', 'headers'] as const).map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
-            {t === 'raw' ? 'Raw' : 'Headers'}
-          </button>
-        ))}
-        {loaded && 'error' in loaded && <span className="detail-error">error: {loaded.error}</span>}
+      <nav className="detail-tabs">
+        <div className="detail-tablist" role="tablist" aria-label="Message view">
+          {(['raw', 'headers'] as const).map((t) => (
+            <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
+              {t === 'raw' ? 'Raw' : 'Headers'}
+            </button>
+          ))}
+        </div>
+        {error !== null && <span className="detail-error">error: {error}</span>}
         {view?.proxyError &&
           (tls?.unused ? (
             // A silently abandoned CONNECT (browser preconnect) is not a failure.
@@ -55,25 +71,54 @@ export function DetailPane() {
           ) : (
             <span className="detail-error">proxy error: {view.proxyError}</span>
           ))}
+        <button
+          className={`detail-inspector-toggle${inspectorOpen ? ' active' : ''}`}
+          aria-pressed={inspectorOpen}
+          aria-controls={inspectorOpen ? 'inspector' : undefined}
+          title="Show parameters, cookies and headers of this exchange"
+          onClick={() => setInspectorOpen(!inspectorOpen)}
+        >
+          Inspector
+        </button>
       </nav>
       {tls && <TLSStrip tls={tls} />}
-      <div className="detail-cols" style={{ gridTemplateColumns: `minmax(160px, ${cols.fraction}fr) auto minmax(160px, ${1 - cols.fraction}fr)` }}>
-        <div className="detail-col">
-          <header>
-            Request <span className="muted">#{selected.id}</span>
-          </header>
-          {view && <Message m={view.request} tab={tab} />}
+      <div
+        className="detail-body"
+        style={{
+          // Pixel floors give way to a share of the width (min()) so a narrow
+          // pane shrinks every column instead of scrolling sideways.
+          gridTemplateColumns: inspectorOpen
+            ? `minmax(min(320px, 55%), ${side.fraction}fr) auto minmax(min(220px, 40%), ${1 - side.fraction}fr)`
+            : '1fr',
+        }}
+      >
+        <div
+          className="detail-cols"
+          style={{ gridTemplateColumns: `minmax(min(160px, 45%), ${cols.fraction}fr) auto minmax(min(160px, 45%), ${1 - cols.fraction}fr)` }}
+        >
+          <div className="detail-col">
+            <header>
+              Request <span className="muted">#{selected.id}</span>
+            </header>
+            {view && <Message m={view.request} tab={tab} />}
+          </div>
+          <Splitter orientation="vertical" split={cols} label="Resize request and response" />
+          <div className="detail-col">
+            <header>
+              Response{' '}
+              <span className="muted">
+                {statusText(selected.status)} · {selected.respSize.toLocaleString()} B · {selected.durationMs} ms
+              </span>
+            </header>
+            {view && <Message m={view.response} tab={tab} />}
+          </div>
         </div>
-        <Splitter orientation="vertical" split={cols} label="Resize request and response" />
-        <div className="detail-col">
-          <header>
-            Response{' '}
-            <span className="muted">
-              {statusText(selected.status)} · {selected.respSize.toLocaleString()} B · {selected.durationMs} ms
-            </span>
-          </header>
-          {view && <Message m={view.response} tab={tab} />}
-        </div>
+        {inspectorOpen && (
+          <>
+            <Splitter orientation="vertical" split={side} label="Resize inspector" />
+            <Inspector view={view} ctx={ctx} error={error} onClose={() => setInspectorOpen(false)} />
+          </>
+        )}
       </div>
     </section>
   )
