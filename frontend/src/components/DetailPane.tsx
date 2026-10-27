@@ -306,11 +306,14 @@ function SearchField({ query, onQuery, inputRef, count, onStep }: SearchFieldPro
   return (
     <div className="detail-search">
       <div className="detail-search-input">
+        <svg className="detail-search-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="7" cy="7" r="4.5" />
+          <path d="M10.5 10.5 14 14" />
+        </svg>
         <input
           ref={inputRef}
           type="text"
           value={draft}
-          placeholder="Search"
           aria-label="Search request, response and inspector"
           aria-keyshortcuts="Meta+Shift+F Control+Shift+F"
           aria-describedby="detail-search-count"

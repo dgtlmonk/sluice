@@ -463,6 +463,26 @@ body.resizing.resizing-col {
 .detail-search-input input {
   padding-top: 1px;
   padding-bottom: 1px;
+  /* room for the magnifier icon */
+  padding-left: calc(var(--font-size) * 1.6);
+}
+
+.detail-search-icon {
+  position: absolute;
+  left: calc(var(--font-size) * 0.45);
+  top: 50%;
+  width: calc(var(--font-size) * 0.95);
+  height: calc(var(--font-size) * 0.95);
+  transform: translateY(-50%);
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.detail-search-input:focus-within .detail-search-icon {
+  stroke: var(--accent);
 }
 
 .detail-search-input .filter-clear {
