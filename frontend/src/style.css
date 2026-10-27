@@ -431,11 +431,16 @@ body.resizing.resizing-col {
   gap: 4px;
 }
 
-.detail-inspector-toggle {
+/* Layout toggle: grouped (Response | Inspector tabs) or three columns. */
+.detail-layout-toggle {
   margin-left: auto;
 }
 
-/* Message columns | splitter | Inspector; columns set inline. */
+.detail-layout-toggle.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .detail-body {
   flex: 1;
   display: grid;
@@ -538,7 +543,47 @@ body.resizing.resizing-col {
 }
 
 
-.detail-col header {
+.detail-col-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-col-tabs [role='tablist'] {
+  display: flex;
+  gap: 4px;
+}
+
+.detail-col-tabs button {
+  padding: 1px 8px;
+  font-weight: 600;
+}
+
+.detail-col-tabs button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.detail-col-tabs .muted {
+  font-weight: normal;
+}
+
+.detail-col-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.detail-col-panel > .inspector {
+  flex: 1;
+}
+
+.detail-col-panel[hidden] {
+  display: none;
+}
+
+.detail-col > header {
   padding: 4px 10px;
   background: var(--bg-raised);
   border-bottom: 1px solid var(--border);
@@ -720,7 +765,7 @@ body.resizing.resizing-col {
   color: var(--warn);
 }
 
-/* Inspector: Burp-style side panel of parameters, cookies and headers. */
+/* Inspector tab: Burp-style parameters, cookies and headers. */
 .inspector {
   display: flex;
   flex-direction: column;
@@ -749,11 +794,6 @@ body.resizing.resizing-col {
 .insp-head button.active {
   border-color: var(--accent);
   color: var(--accent);
-}
-
-.insp-close {
-  font-size: calc(var(--font-size) * 1.1667);
-  line-height: 1;
 }
 
 .insp-scroll {
@@ -786,7 +826,8 @@ body.resizing.resizing-col {
 
 .insp-toggle:focus-visible,
 .insp-expand:focus-visible,
-.detail-tabs button:focus-visible {
+.detail-tabs button:focus-visible,
+.detail-col-tabs button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }

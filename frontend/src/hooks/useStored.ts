@@ -37,7 +37,5 @@ export function useStored<T>(key: string, initial: T, parse: (v: unknown) => T |
   return [value, set]
 }
 
-export const asBoolean = (v: unknown): boolean | undefined => (typeof v === 'boolean' ? v : undefined)
-
 export const asStringList = (v: unknown): string[] | undefined =>
   Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : undefined

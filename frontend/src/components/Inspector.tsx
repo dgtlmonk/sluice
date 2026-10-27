@@ -20,7 +20,8 @@ type Props = {
   view: ExchangeView | null
   ctx: ExchangeContext
   error: string | null
-  onClose: () => void
+  /** True when shown as a tab panel (grouped layout), false beside the messages. */
+  asTab: boolean
 }
 
 /**
@@ -30,7 +31,7 @@ type Props = {
  * SECURITY: every row is captured traffic (untrusted). It is rendered only as
  * React text children and title attributes, never as HTML.
  */
-export function Inspector({ view, ctx, error, onClose }: Props) {
+export function Inspector({ view, ctx, error, asTab }: Props) {
   const [openIds, setOpenIds] = useStored<string[]>('sluice.inspector.sections', [...DEFAULT_OPEN], asStringList)
   const [raw, setRaw] = useState(false)
   // A fixed "now" per exchange keeps the parse pure and the memo stable.
@@ -39,7 +40,7 @@ export function Inspector({ view, ctx, error, onClose }: Props) {
   const toggle = (id: SectionId) => setOpenIds(openIds.includes(id) ? openIds.filter((x) => x !== id) : [...openIds, id])
 
   return (
-    <aside id="inspector" className="inspector" aria-label="Inspector">
+    <div id="detail-panel-inspector" role={asTab ? 'tabpanel' : 'region'} className="inspector" aria-label="Inspector">
       <header className="insp-head">
         <span className="insp-title">Inspector</span>
         <button
@@ -49,9 +50,6 @@ export function Inspector({ view, ctx, error, onClose }: Props) {
           onClick={() => setRaw(!raw)}
         >
           Raw values
-        </button>
-        <button className="insp-close" aria-label="Close inspector" title="Close inspector" onClick={onClose}>
-          ×
         </button>
       </header>
       {/* Keyed by exchange so per-row expand state and row paging never carry over to another one. */}
@@ -64,7 +62,7 @@ export function Inspector({ view, ctx, error, onClose }: Props) {
           </InspectorSection>
         ))}
       </div>
-    </aside>
+    </div>
   )
 }
 

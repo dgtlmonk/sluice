@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ExchangeDetail, ExchangeTLS, type ExchangeTLSState, type ExchangeView, type MessageView } from '../bridge'
-import { asBoolean, useStored } from '../hooks/useStored'
+import { useStored } from '../hooks/useStored'
 import type { ExchangeContext } from '../inspect/inspect'
 import { useExchangeStore } from '../store/exchanges'
 import { statusText } from '../view/status'
@@ -8,6 +8,13 @@ import { Inspector } from './Inspector'
 import { Splitter, useSplit } from './Splitter'
 
 type Tab = 'raw' | 'headers'
+const asTab = (v: unknown): Tab | undefined => (v === 'raw' || v === 'headers' ? v : undefined)
+// Grouped: Response and Inspector share the right column as two tabs, so the
+// request stays in view while you read either. Split: three columns.
+type Layout = 'grouped' | 'split'
+const asLayout = (v: unknown): Layout | undefined => (v === 'grouped' || v === 'split' ? v : undefined)
+type RightPane = 'response' | 'inspector'
+const asRightPane = (v: unknown): RightPane | undefined => (v === 'response' || v === 'inspector' ? v : undefined)
 type Loaded = { view: ExchangeView; tls: ExchangeTLSState } | { error: string }
 
 /**
@@ -21,10 +28,10 @@ type Loaded = { view: ExchangeView; tls: ExchangeTLSState } | { error: string }
 export function DetailPane() {
   const selected = useExchangeStore((s) => s.selected)
   const [loaded, setLoaded] = useState<Loaded | null>(null)
-  const [tab, setTab] = useState<Tab>('raw')
+  const [tab, setTab] = useStored<Tab>('sluice.detail.tab', 'raw', asTab)
+  const [layout, setLayout] = useStored<Layout>('sluice.detail.layout', 'grouped', asLayout)
+  const [right, setRight] = useStored<RightPane>('sluice.detail.right', 'response', asRightPane)
   const cols = useSplit('sluice.split.reqres', 0.5, 0.15, 0.85)
-  // Inspector: open/closed and its width (the message columns' share) are remembered.
-  const [inspectorOpen, setInspectorOpen] = useStored('sluice.inspector.open', true, asBoolean)
   const side = useSplit('sluice.split.inspector', 0.7, 0.3, 0.85)
 
   useEffect(() => {
@@ -53,6 +60,59 @@ export function DetailPane() {
   const view = loaded && 'view' in loaded ? loaded.view : null
   const tls = loaded && 'tls' in loaded ? loaded.tls : null
   const error = loaded && 'error' in loaded ? loaded.error : null
+  const split = layout === 'split'
+  const colStyle = (fraction: number) => ({
+    // Pixel floors give way to a share of the width (min()) so a narrow
+    // pane shrinks every column instead of scrolling sideways.
+    gridTemplateColumns: `minmax(min(160px, 45%), ${fraction}fr) auto minmax(min(160px, 45%), ${1 - fraction}fr)`,
+  })
+  const responseMeta = (
+    <span className="muted">
+      {statusText(selected.status)} · {selected.respSize.toLocaleString()} B · {selected.durationMs} ms
+    </span>
+  )
+  const request = (
+    <div className="detail-col">
+      <header>
+        Request <span className="muted">#{selected.id}</span>
+      </header>
+      {view && <Message m={view.request} tab={tab} />}
+    </div>
+  )
+  const inspector = <Inspector view={view} ctx={ctx} error={error} asTab={!split} />
+
+  // Grouped: the right column's header is a small tab bar, Response | Inspector.
+  const grouped = (
+    <div className="detail-col">
+      <header className="detail-col-tabs">
+        <div role="tablist" aria-label="Right pane">
+          {(['response', 'inspector'] as const).map((p) => (
+            <button
+              key={p}
+              id={`detail-right-${p}`}
+              role="tab"
+              aria-selected={right === p}
+              aria-controls={p === 'inspector' ? 'detail-panel-inspector' : 'detail-panel-response'}
+              className={right === p ? 'active' : ''}
+              onClick={() => setRight(p)}
+            >
+              {p === 'response' ? 'Response' : 'Inspector'}
+            </button>
+          ))}
+        </div>
+        {right === 'response' && responseMeta}
+      </header>
+      {/* Both stay mounted and only hide, so the Inspector keeps its Raw
+          values toggle, paging and expanded rows across tab switches. */}
+      <div className="detail-col-panel" hidden={right !== 'inspector'}>
+        {inspector}
+      </div>
+      <div id="detail-panel-response" role="tabpanel" aria-labelledby="detail-right-response" className="detail-col-panel" hidden={right !== 'response'}>
+        {view && <Message m={view.response} tab={tab} />}
+      </div>
+    </div>
+  )
+
   return (
     <section className="detail detail-tabbed">
       <nav className="detail-tabs">
@@ -72,54 +132,37 @@ export function DetailPane() {
             <span className="detail-error">proxy error: {view.proxyError}</span>
           ))}
         <button
-          className={`detail-inspector-toggle${inspectorOpen ? ' active' : ''}`}
-          aria-pressed={inspectorOpen}
-          aria-controls={inspectorOpen ? 'inspector' : undefined}
-          title="Show parameters, cookies and headers of this exchange"
-          onClick={() => setInspectorOpen(!inspectorOpen)}
+          className={`detail-layout-toggle${split ? ' active' : ''}`}
+          aria-pressed={split}
+          title="On: Request, Response and Inspector as three columns. Off: Response and Inspector share one column as tabs."
+          onClick={() => setLayout(split ? 'grouped' : 'split')}
         >
-          Inspector
+          3 columns
         </button>
       </nav>
       {tls && <TLSStrip tls={tls} />}
-      <div
-        className="detail-body"
-        style={{
-          // Pixel floors give way to a share of the width (min()) so a narrow
-          // pane shrinks every column instead of scrolling sideways.
-          gridTemplateColumns: inspectorOpen
-            ? `minmax(min(320px, 55%), ${side.fraction}fr) auto minmax(min(220px, 40%), ${1 - side.fraction}fr)`
-            : '1fr',
-        }}
-      >
-        <div
-          className="detail-cols"
-          style={{ gridTemplateColumns: `minmax(min(160px, 45%), ${cols.fraction}fr) auto minmax(min(160px, 45%), ${1 - cols.fraction}fr)` }}
-        >
-          <div className="detail-col">
-            <header>
-              Request <span className="muted">#{selected.id}</span>
-            </header>
-            {view && <Message m={view.request} tab={tab} />}
+      {split ? (
+        <div className="detail-body" style={colStyle(side.fraction)}>
+          <div className="detail-cols" style={colStyle(cols.fraction)}>
+            {request}
+            <Splitter orientation="vertical" split={cols} label="Resize request and response" />
+            <div className="detail-col">
+              <header>Response {responseMeta}</header>
+              {view && <Message m={view.response} tab={tab} />}
+            </div>
           </div>
-          <Splitter orientation="vertical" split={cols} label="Resize request and response" />
-          <div className="detail-col">
-            <header>
-              Response{' '}
-              <span className="muted">
-                {statusText(selected.status)} · {selected.respSize.toLocaleString()} B · {selected.durationMs} ms
-              </span>
-            </header>
-            {view && <Message m={view.response} tab={tab} />}
+          <Splitter orientation="vertical" split={side} label="Resize inspector" />
+          {inspector}
+        </div>
+      ) : (
+        <div className="detail-body">
+          <div className="detail-cols" style={colStyle(cols.fraction)}>
+            {request}
+            <Splitter orientation="vertical" split={cols} label="Resize request and response" />
+            {grouped}
           </div>
         </div>
-        {inspectorOpen && (
-          <>
-            <Splitter orientation="vertical" split={side} label="Resize inspector" />
-            <Inspector view={view} ctx={ctx} error={error} onClose={() => setInspectorOpen(false)} />
-          </>
-        )}
-      </div>
+      )}
     </section>
   )
 }
