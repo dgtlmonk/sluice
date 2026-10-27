@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,6 +43,8 @@ const (
 	trustCacheTTL = time.Minute
 	// envBypassFile overrides where the bypass list is kept.
 	envBypassFile = "SLUICE_BYPASS_FILE" //nolint:gosec // G101: an env var name, not a credential
+	// envScopeFile overrides where the scope list is kept.
+	envScopeFile = "SLUICE_SCOPE_FILE"
 )
 
 // App is the Wails binding surface. It is glue only: engine-side code lives in
@@ -71,6 +74,15 @@ type App struct {
 	mu     sync.Mutex
 	stream *stream // nil when no stream is running
 	rate   int
+
+	// settingsMu serializes "apply live, then save" for the scope and
+	// bypass lists, so the saved file always matches the live list even
+	// when two saves race.
+	settingsMu sync.Mutex
+	// scopeLoadErr says why the saved scope could not be loaded at startup
+	// (the scope then fails closed: empty). Cleared by the next good save.
+	// Guarded by settingsMu.
+	scopeLoadErr string
 }
 
 // stream is one running synthetic producer.
@@ -140,6 +152,7 @@ func (a *App) startup(ctx context.Context) {
 		a.proxy.useLeafCerts(auth)
 	}
 	a.proxy.useTLSPolicy(loadBypassList(), a.trust.trusted)
+	a.loadScope()
 
 	// Bound methods read runCtx/cancel under mu, so publish them under mu too.
 	a.mu.Lock()
@@ -391,6 +404,8 @@ func (a *App) BypassHosts() []string { return a.proxy.bypassHosts() }
 // SetBypassHosts validates, applies (live) and saves the bypass list. It
 // returns the normalized list.
 func (a *App) SetBypassHosts(patterns []string) ([]string, error) {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
 	norm, err := a.proxy.setBypass(patterns)
 	if err != nil {
 		return nil, err
@@ -399,6 +414,66 @@ func (a *App) SetBypassHosts(patterns []string) ([]string, error) {
 		return norm, fmt.Errorf("applied, but not saved: %w", err)
 	}
 	return norm, nil
+}
+
+// ScopeState is the scope list as Settings shows it.
+type ScopeState struct {
+	Hosts []string `json:"hosts"`
+	// Warnings flag valid but over-broad patterns ("*.com", "0.0.0.0").
+	Warnings []string `json:"warnings"`
+	// LoadError says why the saved list could not be loaded at startup, in
+	// which case Hosts is empty and every active send is refused. "" when
+	// the list loaded (or has been saved since).
+	LoadError string `json:"loadError"`
+}
+
+// ScopeHosts returns the scope list: the hosts active tools (Repeater, and
+// later Fuzzer and MCP) may send to. Passive proxying is not limited by it.
+func (a *App) ScopeHosts() ScopeState {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
+	return a.scopeStateLocked()
+}
+
+func (a *App) scopeStateLocked() ScopeState {
+	hosts := a.proxy.scopeHosts()
+	return ScopeState{Hosts: hosts, Warnings: engine.ScopeWarnings(hosts), LoadError: a.scopeLoadErr}
+}
+
+// DefaultScopeHosts is the scope of a fresh install, for "Reset to default".
+func (a *App) DefaultScopeHosts() []string { return slices.Clone(engine.DefaultScope) }
+
+// SetScopeHosts validates, applies (live, enforced by the engine) and saves
+// the scope list. It returns the new state (normalized list, warnings).
+// Apply and save run under
+// one lock, so scope.json always holds the list the engine enforces.
+func (a *App) SetScopeHosts(patterns []string) (ScopeState, error) {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
+	if _, err := a.proxy.setScope(patterns); err != nil {
+		return ScopeState{}, err
+	}
+	if err := saveScopeList(a.proxy.scopeHosts()); err != nil {
+		return a.scopeStateLocked(), fmt.Errorf("applied, but not saved: %w", err)
+	}
+	a.scopeLoadErr = "" // the saved file is good again
+	return a.scopeStateLocked(), nil
+}
+
+// loadScope applies the saved scope at startup. A file that cannot be used
+// fails closed (empty scope) and the reason is kept for Settings to show.
+func (a *App) loadScope() {
+	list, loadErr := loadScopeList()
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
+	if _, err := a.proxy.setScope(list); err != nil {
+		// Cannot happen: loadScopeList returns a normalized list.
+		log.Printf("scope list: %v", err)
+	}
+	a.scopeLoadErr = ""
+	if loadErr != nil {
+		a.scopeLoadErr = loadErr.Error() + ". Every active send is refused until you save a scope."
+	}
 }
 
 // TLSHosts lists hosts the engine tunnels raw on its own: suspected
@@ -436,17 +511,69 @@ func (c *trustCache) trusted() bool {
 	return c.result
 }
 
-// bypassFilePath is ~/Library/Application Support/Sluice/bypass.json on macOS.
-func bypassFilePath() (string, error) {
-	if p := strings.TrimSpace(os.Getenv(envBypassFile)); p != "" {
+// settingsFilePath is ~/Library/Application Support/Sluice/<name> on macOS,
+// or the path in env when set (tests point it at a temp dir).
+func settingsFilePath(env, name string) (string, error) {
+	if p := strings.TrimSpace(os.Getenv(env)); p != "" {
 		return filepath.Abs(p)
 	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "Sluice", "bypass.json"), nil
+	return filepath.Join(dir, "Sluice", name), nil
 }
+
+// readListFile reads a JSON string list; found is false when the file does
+// not exist.
+func readListFile(path string) (list []string, found bool, err error) {
+	b, err := os.ReadFile(path) //nolint:gosec // G304: our own settings file
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, true, err
+	}
+	if err := json.Unmarshal(b, &list); err != nil {
+		return nil, true, err
+	}
+	return list, true, nil
+}
+
+// writeListFile saves a JSON string list, mode 0600, atomically.
+func writeListFile(path string, list []string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	if list == nil {
+		list = []string{} // "[]", not "null": an empty list is a real choice
+	}
+	b, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return err
+	}
+	// A fresh temp file per write (CreateTemp makes it 0600), so two
+	// writers can never share or clobber one half-written ".tmp".
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, err = f.Write(b)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path) // atomic: never a half-written list
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
+}
+
+// bypassFilePath is ~/Library/Application Support/Sluice/bypass.json on macOS.
+func bypassFilePath() (string, error) { return settingsFilePath(envBypassFile, "bypass.json") }
 
 // loadBypassList reads the saved list. A missing or bad file is logged and
 // means an empty list: the proxy must start either way.
@@ -456,14 +583,7 @@ func loadBypassList() []string {
 		log.Printf("bypass list: %v", err)
 		return nil
 	}
-	b, err := os.ReadFile(path) //nolint:gosec // G304: our own settings file
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	var list []string
-	if err == nil {
-		err = json.Unmarshal(b, &list)
-	}
+	list, _, err := readListFile(path)
 	if err == nil {
 		list, err = engine.NormalizeBypass(list)
 	}
@@ -479,16 +599,43 @@ func saveBypassList(list []string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+	return writeListFile(path, list)
+}
+
+// scopeFilePath is ~/Library/Application Support/Sluice/scope.json on macOS.
+func scopeFilePath() (string, error) { return settingsFilePath(envScopeFile, "scope.json") }
+
+// loadScopeList reads the saved scope. No file yet means the default scope
+// (localhost, 127.0.0.1, *.test). A file that cannot be read or holds a bad
+// pattern fails closed: an empty scope, so every active send is refused
+// until the user fixes the list in Settings, and the error says why. A
+// saved empty list stays empty (that is a choice, not an error).
+func loadScopeList() ([]string, error) {
+	path, err := scopeFilePath()
+	if err != nil {
+		err = fmt.Errorf("scope list: %w", err)
+		log.Printf("%v (active sends refused)", err)
+		return []string{}, err
 	}
-	b, err := json.MarshalIndent(list, "", "  ")
+	list, found, err := readListFile(path)
+	if err == nil && !found {
+		return slices.Clone(engine.DefaultScope), nil
+	}
+	if err == nil {
+		list, err = engine.NormalizeScope(list)
+	}
+	if err != nil {
+		err = fmt.Errorf("saved scope %s ignored: %w", path, err)
+		log.Printf("%v (active sends refused)", err)
+		return []string{}, err
+	}
+	return list, nil
+}
+
+func saveScopeList(list []string) error {
+	path, err := scopeFilePath()
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path) // atomic: never a half-written list
+	return writeListFile(path, list)
 }

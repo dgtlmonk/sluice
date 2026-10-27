@@ -269,7 +269,7 @@ func (cc *clientConn) handleConnect(x *exchange) bool {
 			// what ended the handshake.
 			if code, ok := sniff.alert(); ok {
 				alert, alerted = tls.AlertError(code), true
-				err = fmt.Errorf("%w (client sent plaintext alert: %v)", err, alert)
+				err = fmt.Errorf("%w (client sent plaintext alert: %w)", err, alert)
 			}
 		}
 		if certSent && !alerted && closedWithoutAlert(err) {

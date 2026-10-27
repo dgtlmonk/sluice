@@ -10,6 +10,8 @@ export function CAInfo():Promise<main.CAInfo>;
 
 export function CATrust():Promise<platform.TrustReport>;
 
+export function DefaultScopeHosts():Promise<Array<string>>;
+
 export function ExchangeDetail(arg1:number):Promise<main.ExchangeView>;
 
 export function ExchangeTLS(arg1:number):Promise<main.ExchangeTLS>;
@@ -26,11 +28,15 @@ export function Prefs():Promise<main.Prefs>;
 
 export function ProxyStatus():Promise<main.ProxyStatus>;
 
+export function ScopeHosts():Promise<main.ScopeState>;
+
 export function SeedRows(arg1:number):Promise<Array<synth.Exchange>>;
 
 export function SetBypassHosts(arg1:Array<string>):Promise<Array<string>>;
 
 export function SetPrefs(arg1:main.Prefs):Promise<main.Prefs>;
+
+export function SetScopeHosts(arg1:Array<string>):Promise<main.ScopeState>;
 
 export function StartStream(arg1:number):Promise<void>;
 

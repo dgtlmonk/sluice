@@ -267,6 +267,22 @@ export namespace main {
 	        this.error = source["error"];
 	    }
 	}
+	export class ScopeState {
+	    hosts: string[];
+	    warnings: string[];
+	    loadError: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ScopeState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hosts = source["hosts"];
+	        this.warnings = source["warnings"];
+	        this.loadError = source["loadError"];
+	    }
+	}
 	
 	export class TLSHost {
 	    host: string;

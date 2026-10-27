@@ -4,11 +4,15 @@ import {
   type CAState,
   caInfo,
   caTrust,
+  defaultScopeHosts,
   exportCA,
   forgetTLSHost,
   installCA,
   savePrefs,
+  type ScopeState,
+  scopeHosts,
   setBypassHosts,
+  setScopeHosts,
   type TLSHostState,
   tlsHosts,
   type TrustState,
@@ -17,7 +21,7 @@ import { FONT_SIZES, type Theme, usePrefsStore } from '../store/prefs'
 
 type Props = { onClose: () => void }
 
-/** Settings: appearance, the root CA (export, install, trust check) and the TLS bypass list. */
+/** Settings: appearance, the root CA (export, install, trust check), the scope list and the TLS bypass list. */
 export function SettingsPanel({ onClose }: Props) {
   const [info, setInfo] = useState<CAState | null>(null)
   const [trust, setTrust] = useState<TrustState | null>(null)
@@ -143,6 +147,8 @@ export function SettingsPanel({ onClose }: Props) {
         {error && <p className="error-text">{error}</p>}
         <p className="muted small">Firefox uses its own certificate store: import the exported PEM there, or set security.enterprise_roots.enabled to true.</p>
 
+        <ScopeSection />
+
         <BypassSection />
       </section>
     </div>
@@ -156,6 +162,104 @@ function TrustBadge({ trust }: { trust: TrustState | null }) {
     <span className="warn-text" title={trust.detail}>
       {trust.installed ? 'Installed, but not trusted' : 'Not installed'}
     </span>
+  )
+}
+
+/**
+ * Scope list editor (one pattern per line). The list lives in the engine:
+ * every active send and every redirect hop is checked there, so this editor
+ * only changes the list, it never decides what is allowed.
+ */
+function ScopeSection() {
+  const [text, setText] = useState('')
+  const [saved, setSaved] = useState('')
+  const [defaults, setDefaults] = useState('')
+  const [warnings, setWarnings] = useState<string[]>([])
+  const [loadError, setLoadError] = useState('')
+  const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  const show = (s: ScopeState) => {
+    setText(s.hosts.join('\n'))
+    setSaved(s.hosts.join('\n'))
+    setWarnings(s.warnings)
+    setLoadError(s.loadError)
+  }
+
+  useEffect(() => {
+    scopeHosts()
+      .then(show)
+      .catch((err) => setStatus({ ok: false, msg: String(err) }))
+    defaultScopeHosts()
+      .then((l) => setDefaults(l.join('\n')))
+      .catch((err) => setStatus({ ok: false, msg: String(err) }))
+  }, [])
+
+  const save = async () => {
+    setStatus(null)
+    try {
+      const s = await setScopeHosts(text.split('\n'))
+      show(s)
+      setStatus(
+        s.hosts.length === 0
+          ? { ok: false, msg: 'Saved an empty scope: every active send is refused.' }
+          : { ok: true, msg: `Saved ${s.hosts.length} pattern${s.hosts.length === 1 ? '' : 's'}.` },
+      )
+    } catch (err) {
+      setStatus({ ok: false, msg: String(err) })
+      // "Applied, but not saved" still changed the live list. Re-read the
+      // baseline, but keep the editor text: a refused pattern must stay
+      // on screen for the user to fix.
+      scopeHosts()
+        .then((s) => {
+          setSaved(s.hosts.join('\n'))
+          setWarnings(s.warnings)
+          setLoadError(s.loadError)
+        })
+        .catch(() => {})
+    }
+  }
+
+  // Reset only fills the editor: nothing changes until Save, so one click
+  // can never wipe a custom list. Save is the confirmation.
+  const onReset = () => {
+    setText(defaults)
+    setStatus({ ok: true, msg: 'Default list loaded into the editor. Save scope to apply it; your custom hosts are not saved in it.' })
+  }
+
+  return (
+    <>
+      <h3>Scope</h3>
+      <p className="muted">
+        Active tools (Repeater now; Fuzzer and MCP later) only send to these hosts. The engine refuses anything else, including a redirect that leaves the list. Browser traffic
+        through the proxy is never limited. One per line: <code>host</code>, an IP, or <code>*.domain</code> (subdomains only). A rule covers every port.
+      </p>
+      {loadError && <p className="error-text">{loadError}</p>}
+      <textarea
+        className="scope-editor"
+        aria-label="Scope hosts"
+        spellCheck={false}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={'localhost\n127.0.0.1\n*.test\n*.web-security-academy.net'}
+      />
+      <div className="actions">
+        <button className="primary" disabled={text === saved && !loadError} onClick={() => void save()}>
+          Save scope
+        </button>
+        <button disabled={defaults === '' || text === defaults} onClick={onReset} title="Load localhost, 127.0.0.1 and *.test into the editor (Save to apply)">
+          Reset to default
+        </button>
+      </div>
+      {status && <p className={status.ok ? 'ok-text' : 'error-text'}>{status.msg}</p>}
+      {warnings.length > 0 && (
+        <ul className="warn-text small">
+          {warnings.map((w) => (
+            <li key={w}>Broad: {w}.</li>
+          ))}
+        </ul>
+      )}
+      <p className="muted small">Only test hosts you own or have written permission to test. For a PortSwigger lab, add its lab host.</p>
+    </>
   )
 }
 

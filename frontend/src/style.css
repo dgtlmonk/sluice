@@ -700,7 +700,8 @@ body.resizing.resizing-col {
   color: var(--warn);
 }
 
-.bypass-editor {
+.bypass-editor,
+.scope-editor {
   width: 100%;
   min-height: 80px;
   box-sizing: border-box;

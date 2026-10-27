@@ -80,12 +80,18 @@ type proxyBridge struct {
 	srv      *engine.Server
 	leaf     engine.LeafMinter // nil: HTTPS interception off (no CA)
 	bypass   []string          // normalized bypass patterns; applied at start and live
-	trusted  func() bool       // CA trust result for pinning detection; nil: unknown
-	tlsMeta  tlsMetaIndex      // JA4 / tunnel facts per row id (not in the store yet)
-	served   chan struct{}     // closed when Serve returns
-	flushed  chan struct{}     // closed when the feed flusher returns
-	writing  chan struct{}     // closed when the storage writer returns
-	reported chan struct{}     // closed when the storage error forwarder returns
+	// scope is the engine's scope list. Every active sender (Repeater,
+	// later Fuzzer and MCP) must open connections through scope.Dial and
+	// check redirect hops with scope.Redirect. It exists from construction
+	// (default list), independent of the listener, is safe for concurrent
+	// use, and is never replaced, only Set.
+	scope    *engine.Scope
+	trusted  func() bool   // CA trust result for pinning detection; nil: unknown
+	tlsMeta  tlsMetaIndex  // JA4 / tunnel facts per row id (not in the store yet)
+	served   chan struct{} // closed when Serve returns
+	flushed  chan struct{} // closed when the feed flusher returns
+	writing  chan struct{} // closed when the storage writer returns
+	reported chan struct{} // closed when the storage error forwarder returns
 }
 
 func newProxyBridge(addr string, newID func() int64) *proxyBridge {
@@ -96,8 +102,26 @@ func newProxyBridge(addr string, newID func() int64) *proxyBridge {
 		capture:      storage.NewCapture(storage.MaxStoredBody),
 		drainTimeout: storageDrainTimeout,
 		storeErr:     "no project store opened",
+		scope:        mustScope(engine.DefaultScope),
 	}
 }
+
+func mustScope(patterns []string) *engine.Scope {
+	s, err := engine.NewScope(patterns)
+	if err != nil {
+		panic(err) // only called with the built-in default list
+	}
+	return s
+}
+
+// setScope validates and applies a new scope list and returns it
+// normalized. Active senders check the scope on every dial and redirect
+// hop, so the new list applies to the next send.
+func (b *proxyBridge) setScope(patterns []string) ([]string, error) {
+	return b.scope.Set(patterns)
+}
+
+func (b *proxyBridge) scopeHosts() []string { return b.scope.List() }
 
 // useStore sets where history is written. Call before start. A nil store
 // with a reason keeps the proxy working while every exchange is counted

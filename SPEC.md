@@ -141,7 +141,7 @@ Pinning detection: when the client aborts the handshake right after receiving th
 - Stages: OnRequest → scope check → match-and-replace → intercept hold (optional) → forward → OnResponse → match-and-replace → intercept hold (optional) → publish.
 - Traffic never waits on observers (see Architecture for the two event paths).
 - Intercept holds are channels the UI completes with forward / edit / drop. Each hold has a timeout and a `context` cancellation tied to shutdown, and releases its pooled upstream connection on abort.
-- Scope is enforced here, in the engine, for every active send, redirect hop and resolved IP. The UI only displays it.
+- Scope is enforced here, in the engine, for every active send, redirect hop and resolved IP (resolved IPs: not yet, see Known gaps). The UI only edits and displays it.
 - Match-and-replace (M4): ordered regex rules on request/response headers and bodies, each rule toggleable.
 
 **Later**
@@ -214,7 +214,9 @@ The main goal is functionality. These items are tracked for a later optimization
 
 Found during M3 and not yet fixed. Each one is closed by the milestone named, or earlier if it bites.
 
-- **Engine scope check (before M4 ships):** the scope list is not enforced in the engine yet. Repeater, Fuzzer and MCP sends must refuse out-of-scope hosts, redirect hops and resolved IPs in the engine, not only in the UI.
+- ~~**Engine scope check (before M4 ships):**~~ done (m4-scope-check): `engine.Scope` (`internal/engine/scope.go`) holds the list (default `localhost`, `127.0.0.1`, `*.test`; saved to `scope.json`, edited in Settings). Active senders open every connection through `Scope.Dial` and check every redirect hop with `Scope.Redirect`; both refuse out-of-scope host names and literal IPs, and malformed or ambiguous targets (userinfo, backslashes, alternative IPv4 forms, zones). `Scope.Dial` resolves names rooted (`a.test.`), so a DNS search domain cannot turn a checked name into an unchecked one. Passive proxying is not scope-limited.
+- **Scope: one entry point is a convention plus a guard (m4-repeater):** nothing in the type system stops engine code from dialling on its own; `TestOnlyScopeDialsActively` (a source scan with a per-file allow-list) catches a new dial, resolve or HTTP client instead. Redirect re-checks are opt-in until Repeater adds one engine `Send` that owns the dial and the redirect hop loop (each hop through `Scope.Redirect`), with a test that a 3xx out of scope is never followed. Fuzzer and MCP sends go through that `Send` too.
+- **Scope: resolved IPs (DNS rebinding):** an in-scope *name* that resolves to an out-of-scope IP is not refused; only names and literal IPs are checked. Needs a rule for which IPs a name may resolve to (e.g. pin the first answer, refuse private ranges for public names). Before M8 (MCP active tools).
 - **SNI vs CONNECT host:** a ClientHello whose SNI differs from the CONNECT host is not refused; refuse it or record both (M4).
 - **TLS facts not stored:** JA4, tunnel reason and the pinning flag live in memory only; the store has no schema for them, so they vanish on restart (M4).
 - **Old CONNECT rows:** rows stored before M3 show `http://host:443`; display them as `https` (M4).

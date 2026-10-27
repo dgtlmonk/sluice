@@ -14,6 +14,10 @@ export function CATrust() {
   return window['go']['main']['App']['CATrust']();
 }
 
+export function DefaultScopeHosts() {
+  return window['go']['main']['App']['DefaultScopeHosts']();
+}
+
 export function ExchangeDetail(arg1) {
   return window['go']['main']['App']['ExchangeDetail'](arg1);
 }
@@ -46,6 +50,10 @@ export function ProxyStatus() {
   return window['go']['main']['App']['ProxyStatus']();
 }
 
+export function ScopeHosts() {
+  return window['go']['main']['App']['ScopeHosts']();
+}
+
 export function SeedRows(arg1) {
   return window['go']['main']['App']['SeedRows'](arg1);
 }
@@ -56,6 +64,10 @@ export function SetBypassHosts(arg1) {
 
 export function SetPrefs(arg1) {
   return window['go']['main']['App']['SetPrefs'](arg1);
+}
+
+export function SetScopeHosts(arg1) {
+  return window['go']['main']['App']['SetScopeHosts'](arg1);
 }
 
 export function StartStream(arg1) {

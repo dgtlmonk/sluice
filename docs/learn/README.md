@@ -16,3 +16,4 @@ Sluice is a learning build. Each core feature gets one short page: the idea, why
 | 10 | [TLS interception: CONNECT, the handshake, SNI and ALPN](10-tls-mitm.md) | M3 |
 | 11 | [Not decrypting: the bypass list, h2-only tunnels and pinning](11-bypass-and-pinning.md) | M3 |
 | 12 | [JA4: fingerprinting the TLS client, from the defender's side](12-ja4-fingerprint.md) | M3 |
+| 13 | [Scope: only send where you are allowed to](13-scope.md) | M4 |

@@ -3,15 +3,18 @@ import {
   BypassHosts,
   CAInfo,
   CATrust,
+  DefaultScopeHosts,
   ExportCA,
   ForgetTLSHost,
   History,
   InstallCA,
   Prefs as GetPrefs,
   ProxyStatus,
+  ScopeHosts,
   SeedRows,
   SetBypassHosts,
   SetPrefs,
+  SetScopeHosts,
   StartStream,
   StepFontSize,
   StopStream,
@@ -38,6 +41,7 @@ export type CAState = main.CAInfo
 export type TrustState = platform.TrustReport
 export type ExchangeTLSState = main.ExchangeTLS
 export type TLSHostState = main.TLSHost
+export type ScopeState = main.ScopeState
 const SEED_CHUNK = 10_000 // must not exceed maxSeedChunk in app.go
 
 /** Subscribes the store to engine batches. Returns the unsubscribe function. */
@@ -104,6 +108,17 @@ export const exportCA = (): Promise<string> => ExportCA()
 export const bypassHosts = (): Promise<string[]> => BypassHosts().then((l) => l ?? [])
 /** Validates, applies live and saves; resolves to the normalized list. */
 export const setBypassHosts = (patterns: string[]): Promise<string[]> => SetBypassHosts(patterns).then((l) => l ?? [])
+/**
+ * Scope: the hosts active tools (Repeater, later Fuzzer and MCP) may send to.
+ * "host", an IP, or "*.domain". The engine enforces it on every send and
+ * redirect hop; passive browser traffic is not limited by it.
+ */
+export const scopeHosts = (): Promise<ScopeState> => ScopeHosts().then(withScopeLists)
+/** Validates, applies live and saves; resolves to the new state (normalized list, warnings). */
+export const setScopeHosts = (patterns: string[]): Promise<ScopeState> => SetScopeHosts(patterns).then(withScopeLists)
+/** Go nil slices arrive as null; the UI always gets arrays. */
+const withScopeLists = (s: ScopeState): ScopeState => ({ ...s, hosts: s.hosts ?? [], warnings: s.warnings ?? [] })
+export const defaultScopeHosts = (): Promise<string[]> => DefaultScopeHosts().then((l) => l ?? [])
 /** Hosts the engine tunnels on its own: pinning suspected, or http/1.1 refused. */
 export const tlsHosts = (): Promise<TLSHostState[]> => TLSHosts().then((l) => l ?? [])
 export const forgetTLSHost = (host: string): Promise<void> => ForgetTLSHost(host)

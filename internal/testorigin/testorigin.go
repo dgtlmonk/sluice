@@ -23,6 +23,10 @@
 //	                     LLM-shaped endpoint: reads the whole request body
 //	                     (Content-Length or chunked) and answers ChatReply
 //	                     as JSON with Content-Length. Used by load tests.
+//	GET /redirect?to=<location>
+//	                     302 with Location set to the "to" value, verbatim.
+//	                     Used by the scope tests: an in-scope origin that
+//	                     tries to bounce an active send somewhere else.
 package testorigin
 
 import (
@@ -44,6 +48,7 @@ const (
 	PathClose         = "/close"
 	PathSSE           = "/sse"
 	PathChat          = "/v1/chat/completions"
+	PathRedirect      = "/redirect"
 )
 
 // Deterministic bodies.
@@ -85,7 +90,17 @@ func Handler() http.Handler {
 	mux.HandleFunc("GET "+PathClose, handleClose)
 	mux.HandleFunc("GET "+PathSSE, handleSSE)
 	mux.HandleFunc("POST "+PathChat, handleChat)
+	mux.HandleFunc("GET "+PathRedirect, handleRedirect)
 	return mux
+}
+
+// handleRedirect answers 302 with the "to" query value as Location. It sets
+// the header directly (not http.Redirect), so the value reaches the client
+// exactly as the test wrote it, unresolved and unescaped.
+func handleRedirect(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Location", r.URL.Query().Get("to"))
+	w.Header().Set("Content-Length", "0")
+	w.WriteHeader(http.StatusFound)
 }
 
 // Start serves Handler on 127.0.0.1:0 (loopback, OS-chosen port). It returns
