@@ -156,7 +156,7 @@ One window: a React app in a webview, with a tab per tool. The engine exposes ty
 
 | Tab | Purpose | Key components |
 | --- | --- | --- |
-| Proxy / History | Every captured exchange; filter, search, select | TanStack Table + Virtual (method, host, path, status, length, MIME, time, LLM flag); filter bar; request/response split view; Inspector side panel (parameters, cookies with flag checks, headers, protocol); WebSocket frames sub-tab (M5) |
+| Proxy / History | Every captured exchange; filter, search, select | TanStack Table + Virtual (method, host, path, status, length, MIME, time, LLM flag); filter bar; request/response split view; Response | Inspector tabs in the right column, or 3 columns (Inspector: parameters, cookies with flag checks, headers, protocol, encoded-path flag); detail search (Shift+Cmd+F) across request, response and Inspector; WebSocket frames sub-tab (M5) |
 | Intercept | Hold, edit, forward, or drop the next request/response | Toggle, CodeMirror editor, Forward / Drop, queue count, hold timeout; match-and-replace rules editor (M4) |
 | Repeater | Edit and resend one request, compare responses | Tabs per saved request, CodeMirror editor, Send, response view with timing |
 | Fuzzer | Payload positions, payload lists, results table | Position markers (`§…§`), sniper and cluster-bomb modes, list loader, concurrency + delay settings, results grid sortable by status/length/time |
